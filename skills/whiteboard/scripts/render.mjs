@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os'
 import { basename, delimiter, dirname, extname, join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-export const VERSION = '1.0.2'
+export const VERSION = '1.0.3'
 export const RENDER_TIMEOUT_MS = 60_000
 export const MAX_TITLE = 80
 
@@ -84,9 +84,19 @@ const ANYWHERE = {
   plantuml: [/%\s*(getenv|load_json|loadjson|file_exists|dirpath|filename|filenamenoextension|call_user_func|invoke_procedure|get_variable_value)\s*\(/i, /<img\s*:/i],
   // Imports: `...@file`, `key: @file`, `[@a; @b]`, quoted or not, wherever they sit on a line.
   d2: [/(\.\.\.|:|\[|;)\s*["']?@/],
-  // Images, image shapes and CSS that loads resources. The browser that renders Mermaid also
-  // runs with networking turned off (see puppeteerConfigFor), so these are a second line.
-  mermaid: [/<img\b/i, /<image\b/i, /@\{[^}]*\bimg\b/i, /url\s*\(/i, /@import\b/i, /themeCSS/i],
+  // The browser that renders Mermaid has networking off (see puppeteerConfigFor) but loads its
+  // page from a local file, so local images would still render. Labels may hold only simple
+  // formatting tags with no resource attributes; image shapes, CSS that loads resources and
+  // CSS escapes (which could spell url( in disguise) are refused.
+  mermaid: [
+    /<\/?(?!(br|b|i|u|em|strong|sub|sup|small|code|span|p|hr)\b)[a-z]/i,
+    /<[^>]*\b(src|srcset|poster|background|data|href|xlink:href|style)\s*=/i,
+    /@\{[^}]*\bimg\b/i,
+    /url\s*\(/i,
+    /@import\b/i,
+    /themeCSS/i,
+    /^\s*(style|classDef|linkStyle)\b[^\n]*\\/im,
+  ],
 }
 
 function lineAt(source, index) {
@@ -112,8 +122,10 @@ export function unsafeDirective(language, source) {
 
 // D2 draws PNGs in a browser and bundles every image first, so icons, markdown or HTML blocks
 // and any URL or file reference would be fetched or read into the image. SVGs keep them as links.
+// Deliberately broad: any block string (`key: |...|`, whatever its delimiter), any HTML tag or
+// entity, any URL-like text. Plain boxes, arrows and labels still get a PNG.
 export function hasD2External(source) {
-  return /\bicon\s*:|\|+\s*`*\s*(md|markdown|html)\b|!\[|<img\b|<image\b|\b(https?|file|ftp):|url\s*\(/i.test(source)
+  return /\bicon\s*:|:\s*\||<[a-z!/?]|&(#|[a-z]+;)|!\[|[a-z][\w+.-]*:\/\/|\bfile:|url\s*\(|\\/i.test(source)
 }
 
 // Chrome flags that route every http(s) request, loopback included, to a closed port: Mermaid

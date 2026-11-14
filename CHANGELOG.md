@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.3 — 2026-11-14
+
+- Mermaid: HTML in labels is an allowlist (`<br>`, `<b>`, `<i>`, `<u>`, `<em>`, `<strong>`,
+  `<sub>`, `<sup>`, `<small>`, `<code>`, `<span>`, `<p>`, `<hr>`) and no tag may carry `src`,
+  `srcset`, `poster`, `href`, `data`, `background` or `style` attributes. Backslashes in
+  `style`/`classDef`/`linkStyle` lines (CSS escapes) are refused. This covers local image
+  files, which the offline browser could still load from disk.
+- D2: PNG export is skipped for any block string whatever its delimiter, any HTML tag or
+  entity, backslash escapes and any URL-like text.
+
 ## 1.0.2 — 2026-11-14
 
 - Mermaid renders in a headless browser with networking turned off (every http(s) request,

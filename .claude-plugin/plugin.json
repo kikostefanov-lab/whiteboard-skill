@@ -1,6 +1,6 @@
 {
   "name": "whiteboard",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Draw Mermaid, D2 and PlantUML diagrams (architecture, flowcharts, sequence, class, state, ER) rendered locally to SVG, with syntax errors fed back so the agent fixes them.",
   "author": { "name": "Kiko Stefanov", "url": "https://github.com/kikostefanov-lab" },
   "homepage": "https://github.com/kikostefanov-lab/whiteboard-skill",

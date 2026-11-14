@@ -111,11 +111,34 @@ describe('helpers', () => {
     assert.equal(unsafeDirective('mermaid', '%%{init: {"theme": "forest"}}%%\nflowchart TD\n  A --> B'), null)
   })
 
+  test('unsafeDirective: Mermaid HTML is an allowlist, CSS escapes refused', () => {
+    for (const bad of [
+      'A["<video poster=/home/me/x.png>"]',
+      'A["<span style=\'background:x\'>a</span>"]',
+      'A["<b data=x>a</b>"]',
+      'A["<object>"]',
+      'A["<svg><foreignObject/></svg>"]',
+      'style A fill:\\75 rl(/x.png)',
+      'classDef c fill:\\000075rl(x)',
+    ]) assert.ok(unsafeDirective('mermaid', `flowchart TD\n  ${bad}`), bad)
+    for (const ok of [
+      'A["line one<br>line two"]',
+      'A["<b>bold</b> and <i>it</i><br/>x"]',
+      'A <--> B',
+      'A -- x < y --> B',
+      'style A fill:#f9f,stroke:#333',
+    ]) assert.equal(unsafeDirective('mermaid', `flowchart TD\n  ${ok}`), null, ok)
+    assert.equal(unsafeDirective('mermaid', 'classDiagram\n  Animal <|-- Duck'), null)
+  })
+
   test('hasD2External finds anything D2 would fetch for a PNG', () => {
-    for (const src of ['a: {icon: x.svg}', 'a: |md ![x](y.png) |', 'a: |||md\n# hi\n|||', 'a: |`html <b>x</b>`|', 'a.link: https://x', 'a: "file:///etc/x"']) {
+    for (const src of [
+      'a: {icon: x.svg}', 'a: |md ![x](y.png) |', 'a: |||md\n# hi\n|||', 'a: |`html <b>x</b>`|', 'a: |#md x #|',
+      'a: "&lt;img src=x&gt;"', 'a: "&#60;img"', 'a.link: https://x', 'a: "file:///etc/x"', 'a: "\\u003cimg"', 'a.tooltip: ftp://h/x',
+    ]) {
       assert.equal(hasD2External(src), true, src)
     }
-    assert.equal(hasD2External('a -> b: calls\nb.shape: cylinder'), false)
+    assert.equal(hasD2External('a -> b: calls\nb.shape: cylinder\nc <-> d: sync'), false)
   })
 
   test('byNewestVersion sorts nvm folders newest first', () => {
