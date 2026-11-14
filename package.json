@@ -1,0 +1,15 @@
+{
+  "name": "whiteboard-skill",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Agent skill: draw Mermaid, D2 and PlantUML diagrams rendered locally to SVG.",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "test": "node --test test/render.test.mjs",
+    "validate": "node scripts/validate.mjs",
+    "smoke": "node scripts/smoke.mjs",
+    "package": "node scripts/package.mjs"
+  }
+}

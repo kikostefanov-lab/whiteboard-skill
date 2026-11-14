@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [18, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm run validate
+      - run: npm test
+
+  smoke:
+    name: smoke (real Mermaid, D2, PlantUML)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install renderers
+        run: |
+          npm i -g @mermaid-js/mermaid-cli
+          curl -fsSL https://d2lang.com/install.sh | sh -s --
+          sudo apt-get update && sudo apt-get install -y plantuml
+          # Chrome on GitHub runners needs --no-sandbox.
+          echo '{"args":["--no-sandbox"]}' > "$RUNNER_TEMP/puppeteer.json"
+          echo "WHITEBOARD_PUPPETEER_CONFIG=$RUNNER_TEMP/puppeteer.json" >> "$GITHUB_ENV"
+      - run: node skills/whiteboard/scripts/render.mjs --doctor
+      - run: npm run smoke -- --all

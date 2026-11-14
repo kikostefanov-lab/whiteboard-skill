@@ -1,0 +1,16 @@
+{
+  "name": "whiteboard-skill",
+  "owner": { "name": "Kiko Stefanov", "url": "https://github.com/kikostefanov-lab" },
+  "metadata": {
+    "description": "The whiteboard skill: diagrams rendered locally from Mermaid, D2 and PlantUML."
+  },
+  "plugins": [
+    {
+      "name": "whiteboard",
+      "source": "./",
+      "description": "Draw Mermaid, D2 and PlantUML diagrams rendered locally to SVG, with syntax errors fed back so the agent fixes them.",
+      "version": "1.0.0",
+      "license": "MIT"
+    }
+  ]
+}
