@@ -85,6 +85,26 @@ describe('helpers', () => {
     assert.equal(unsafeDirective('mermaid', '!include /etc/passwd'), null)
   })
 
+  test('unsafeDirective: bypasses found in review', () => {
+    // A `#` earlier on the line, quoted and array imports.
+    assert.equal(unsafeDirective('d2', 'a: "#"; ...@/abs/secrets'), 'a: "#"; ...@/abs/secrets')
+    assert.equal(unsafeDirective('d2', 'x: "@/abs/file"'), 'x: "@/abs/file"')
+    assert.equal(unsafeDirective('d2', 'vars: [@a; @b]'), 'vars: [@a; @b]')
+    // PlantUML: only allowlisted directives; dynamic calls and image loads anywhere.
+    assert.equal(unsafeDirective('plantuml', '@startuml\n!theme cerulean from /tmp/x\n@enduml'), '!theme cerulean from /tmp/x')
+    assert.equal(unsafeDirective('plantuml', '@startuml\n!includedef foo\n@enduml'), '!includedef foo')
+    assert.equal(unsafeDirective('plantuml', '@startuml\n!include <C4/C4_Container> x\n@enduml'), '!include <C4/C4_Container> x')
+    assert.equal(unsafeDirective('plantuml', '@startuml\nA : %call_user_func("getenv", "HOME")\n@enduml'), 'A : %call_user_func("getenv", "HOME")')
+    assert.equal(unsafeDirective('plantuml', '@startuml\nA : <img:/home/me/secret.png>\n@enduml'), 'A : <img:/home/me/secret.png>')
+    for (const ok of ['!theme cerulean', '!$x = 1', '!define FOO bar', '!procedure $a()', '!endprocedure', '!if $x', '!endif', '!pragma layout smetana']) {
+      assert.equal(unsafeDirective('plantuml', `@startuml\n${ok}\n@enduml`), null, ok)
+    }
+    // Mermaid image shapes and HTML images.
+    assert.equal(unsafeDirective('mermaid', 'flowchart TD\n  A@{ img: "file:///etc/x.png" }'), 'A@{ img: "file:///etc/x.png" }')
+    assert.equal(unsafeDirective('mermaid', 'flowchart TD\n  A["<img src=\'http://169.254.169.254/\'>"]'), 'A["<img src=\'http://169.254.169.254/\'>"]')
+    assert.equal(unsafeDirective('mermaid', 'flowchart TD\n  A[an img: tag] --> B'), null)
+  })
+
   test('byNewestVersion sorts nvm folders newest first', () => {
     assert.deepEqual(['v18.2.0', 'system', 'v22.10.1', 'v22.9.0'].sort(byNewestVersion), ['v22.10.1', 'v22.9.0', 'v18.2.0', 'system'])
   })
@@ -227,6 +247,21 @@ describe('cli', { skip: process.platform === 'win32' && 'POSIX fake renderers' }
     })
     assert.equal(allowed.code, 0, allowed.err)
     assert.match(readFileSync(log, 'utf8'), /PLANTUML_SECURITY_PROFILE=\n/)
+  })
+
+  test('D2 PNG is skipped when the source has icons; renderers run in the work folder', () => {
+    freshCwd()
+    const r = cli(['--title', 'Icons', '--language', 'd2', '--png', '--json'], { input: 'a: {icon: https://example.com/x.svg}' })
+    assert.equal(r.code, 0, r.err)
+    const json = JSON.parse(r.out)
+    assert.equal(json.files.png, undefined)
+    assert.match(json.warning, /PNG skipped/)
+    assert.equal(readFileSync(log, 'utf8').split('\n').filter(l => l.startsWith('d2 ')).length, 1, 'only the SVG render ran')
+    const allowed = JSON.parse(cli(['--title', 'Icons', '--language', 'd2', '--png', '--json'], {
+      input: 'a: {icon: https://example.com/x.svg}',
+      env: { WHITEBOARD_ALLOW_INCLUDES: '1' },
+    }).out)
+    assert.ok(allowed.files.png)
   })
 
   test('refuses to write through a symbolic link', { skip: process.platform === 'win32' }, () => {

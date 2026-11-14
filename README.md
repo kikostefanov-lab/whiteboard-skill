@@ -36,10 +36,12 @@ skills.
 - **Local and private.** Nothing is uploaded. `--share` (a secret GitHub gist) runs only when
   you ask for it.
 - **Safe with untrusted input.** The agent may draw from READMEs or issues it didn't write.
-  So PlantUML runs in its `SANDBOX` security profile, and directives that read files,
-  environment variables or URLs into the image (`!include`, `%getenv`, D2 `@` imports) are
-  refused unless `WHITEBOARD_ALLOW_INCLUDES=1` is set. D2 doesn't fetch remote icons. The
-  script never writes through a symbolic link.
+  So anything that reads files, environment variables or URLs into the image is refused
+  unless `WHITEBOARD_ALLOW_INCLUDES=1` is set: PlantUML directives outside an allowlist,
+  `%getenv` and similar built-ins, `<img:…>`, D2 `@` imports and Mermaid images. PlantUML
+  also runs in its `SANDBOX` security profile (newer versions), every renderer runs from an
+  empty temporary folder, and D2 icons stay links, never fetched. The script never writes
+  through a symbolic link.
 - **No dependencies** beyond Node 18+ and the renderer CLIs. Works on macOS, Linux and Windows.
 
 ## Install

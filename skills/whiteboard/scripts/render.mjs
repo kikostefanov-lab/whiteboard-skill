@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os'
 import { basename, delimiter, dirname, extname, join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-export const VERSION = '1.0.0'
+export const VERSION = '1.0.1'
 export const RENDER_TIMEOUT_MS = 60_000
 export const MAX_TITLE = 80
 
@@ -60,27 +60,58 @@ Redrawing an existing title moves the previous files to <out>/.versions/<name>/.
 
 // ---------------------------------------------------------------- pure helpers
 
-// Directives that make a renderer read local files, environment variables or URLs into the
-// image. A diagram drawn from untrusted content (a README, an issue) could otherwise leak
-// secrets into a file the user shares. `!include <stdlib/...>` (PlantUML's bundled library) stays allowed.
-const UNSAFE_DIRECTIVES = {
-  plantuml: [
-    /^\s*!(include(url|sub|_many|_once)?|import)\b(?!\s*<)/im,
-    /%(getenv|load_json|loadjson|file_exists|dirpath|filename|filenameNoExtension)\s*\(/i,
-  ],
-  d2: [/^\s*[^#\n]*\.\.\.\s*@|:\s*@[\w./-]/m],
+// Keeps a diagram from reading local files, environment variables or URLs into the image.
+// A diagram drawn from untrusted content (a README, an issue) could otherwise leak secrets
+// into a file the user shares. The checks are deliberately strict: a false positive costs a
+// rewrite, a miss costs a leak.
+
+// PlantUML preprocessor directives that cannot touch files, the network or the environment.
+// Every other `!` directive is refused. `!include <...>` loads PlantUML's bundled library.
+const PLANTUML_ALLOWED = new RegExp(
+  '^!(' + [
+    'include\\s*<[\\w./-]+>\\s*$',
+    'theme\\s+[\\w-]+\\s*$',
+    '\\$',
+    ...['define', 'definelong', 'enddefinelong', 'undef', 'pragma', 'procedure', 'endprocedure', 'function', 'endfunction',
+      'unquoted', 'final', 'return', 'if', 'ifdef', 'ifndef', 'else', 'elseif', 'endif', 'while', 'endwhile', 'foreach',
+      'endfor', 'log', 'assert', 'local', 'global', 'startsub', 'endsub'].map(d => `${d}\\b`),
+  ].join('|') + ')',
+  'i',
+)
+
+const ANYWHERE = {
+  // Built-ins that read files or env, or call other built-ins by name; <img:...> loads an image file or URL.
+  plantuml: [/%\s*(getenv|load_json|loadjson|file_exists|dirpath|filename|filenamenoextension|call_user_func|invoke_procedure|get_variable_value)\s*\(/i, /<img\s*:/i],
+  // Imports: `...@file`, `key: @file`, `[@a; @b]`, quoted or not, wherever they sit on a line.
+  d2: [/(\.\.\.|:|\[|;)\s*["']?@/],
+  // Image shapes and HTML images are fetched by the renderer's browser.
+  mermaid: [/<img\b/i, /@\{[^}]*\bimg\s*:/i],
 }
 
+function lineAt(source, index) {
+  const start = source.lastIndexOf('\n', index - 1) + 1
+  const end = source.indexOf('\n', index)
+  return source.slice(start, end === -1 ? undefined : end).trim()
+}
+
+// Returns the offending line, so the message shows the agent exactly what to change.
 export function unsafeDirective(language, source) {
-  for (const pattern of UNSAFE_DIRECTIVES[language] ?? []) {
+  if (language === 'plantuml') {
+    for (const raw of source.split(/\r?\n/)) {
+      const line = raw.trim()
+      if (line.startsWith('!') && !PLANTUML_ALLOWED.test(line)) return line
+    }
+  }
+  for (const pattern of ANYWHERE[language] ?? []) {
     const m = pattern.exec(source)
-    if (!m) continue
-    // Return the whole line, so the message shows the agent exactly what to change.
-    const start = source.lastIndexOf('\n', m.index + m[0].search(/\S/)) + 1
-    const end = source.indexOf('\n', m.index + m[0].length)
-    return source.slice(start, end === -1 ? undefined : end).trim()
+    if (m) return lineAt(source, m.index)
   }
   return null
+}
+
+// D2 draws PNGs in a browser, which would fetch remote icons and read local ones into the image.
+export function hasD2Icons(source) {
+  return /\bicon\s*:/.test(source)
 }
 
 export function slug(title) {
@@ -244,7 +275,7 @@ export function findRenderer(language) {
 
 const allowIncludes = () => process.env.WHITEBOARD_ALLOW_INCLUDES === '1'
 
-function run(bin, args, { timeout = RENDER_TIMEOUT_MS } = {}) {
+function run(bin, args, { timeout = RENDER_TIMEOUT_MS, cwd } = {}) {
   // mmdc is a Node script: put its folder first on PATH so `#!/usr/bin/env node` finds the node it was installed with.
   const env = { ...process.env, PATH: [dirname(bin), process.env.PATH].filter(Boolean).join(delimiter) }
   // PlantUML's SANDBOX profile blocks file, URL and environment access from inside diagrams.
@@ -252,8 +283,8 @@ function run(bin, args, { timeout = RENDER_TIMEOUT_MS } = {}) {
   const viaShell = isWindows && /\.(cmd|bat)$/i.test(bin)
   const quote = s => `"${String(s).replace(/"/g, '""')}"`
   const result = viaShell
-    ? spawnSync([bin, ...args].map(quote).join(' '), { shell: true, encoding: 'utf8', timeout, env, windowsHide: true })
-    : spawnSync(bin, args, { encoding: 'utf8', timeout, env, windowsHide: true })
+    ? spawnSync([bin, ...args].map(quote).join(' '), { shell: true, encoding: 'utf8', timeout, env, cwd, windowsHide: true })
+    : spawnSync(bin, args, { encoding: 'utf8', timeout, env, cwd, windowsHide: true })
   return result
 }
 
@@ -263,7 +294,8 @@ export function renderTo(language, bin, source, { dir, format = 'svg', theme = '
   const output = join(dir, `diagram.${format}`)
   writeFileSync(input, source.endsWith('\n') ? source : `${source}\n`)
   const puppeteerConfig = process.env.WHITEBOARD_PUPPETEER_CONFIG || ''
-  const result = run(bin, renderArgv(language, { input, output, dir, format, theme, mermaidConfig, puppeteerConfig }))
+  // Run from the empty work folder, so any relative path inside the diagram resolves to nothing.
+  const result = run(bin, renderArgv(language, { input, output, dir, format, theme, mermaidConfig, puppeteerConfig }), { cwd: dir })
   if (result.error) {
     const timedOut = result.error.code === 'ETIMEDOUT' || result.signal === 'SIGTERM'
     return {
@@ -492,7 +524,9 @@ export function main(argv = process.argv.slice(2)) {
     }
     const rendered = { svg: svg.path }
     let pngNote = ''
-    if (opts.png) {
+    if (opts.png && language === 'd2' && hasD2Icons(source) && !allowIncludes()) {
+      pngNote = 'PNG skipped: D2 would fetch or read the icons into the image. The SVG keeps them as links; set WHITEBOARD_ALLOW_INCLUDES=1 for a PNG.'
+    } else if (opts.png) {
       const pngDir = join(work, 'png')
       mkdirSync(pngDir)
       const png = renderTo(language, found.path, source, { dir: pngDir, format: 'png', theme, mermaidConfig })

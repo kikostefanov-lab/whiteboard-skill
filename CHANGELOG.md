@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.1 — 2026-11-14
+
+Stricter protection against diagrams that read files, environment variables or URLs into
+the image, after a security review of 1.0.0:
+
+- PlantUML: only an allowlist of preprocessor directives is accepted (`!define`, `!if`,
+  `!procedure`, `!$var`, `!theme <name>`, `!include <stdlib>` …), so `!theme … from`,
+  `!includedef` and future file directives are refused too. `%call_user_func`, `<img:…>`
+  and the file and environment built-ins are refused. This also protects older PlantUML
+  versions that ignore the `SANDBOX` profile.
+- D2: `@` imports are found anywhere on a line, quoted or in arrays. Diagrams with `icon:`
+  render to SVG only, because D2's PNG export would fetch or read the icons.
+- Mermaid: `<img>` and image shapes (`@{ img: … }`) are refused.
+- Every renderer runs from the empty temporary folder, so relative paths resolve to nothing.
+
 ## 1.0.0 — 2026-11-14
 
 First release as a standalone Agent Skill, ported from the Claude Code whiteboard mod
