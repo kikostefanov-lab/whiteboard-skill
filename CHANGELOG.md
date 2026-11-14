@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.2 — 2026-11-14
+
+- Mermaid renders in a headless browser with networking turned off (every http(s) request,
+  loopback included, goes to a closed proxy port), so nothing in a diagram can reach the
+  network. Your `WHITEBOARD_PUPPETEER_CONFIG` is merged in. Also refused: `<image>`, `url(…)`,
+  `@import`, `themeCSS` and any `img` key in a shape.
+- D2 PNG export is skipped for markdown or HTML blocks, images and any URL or file
+  reference, not only icons; the SVG keeps them as links.
+
 ## 1.0.1 — 2026-11-14
 
 Stricter protection against diagrams that read files, environment variables or URLs into

@@ -39,8 +39,9 @@ skills.
   So anything that reads files, environment variables or URLs into the image is refused
   unless `WHITEBOARD_ALLOW_INCLUDES=1` is set: PlantUML directives outside an allowlist,
   `%getenv` and similar built-ins, `<img:…>`, D2 `@` imports and Mermaid images. PlantUML
-  also runs in its `SANDBOX` security profile (newer versions), every renderer runs from an
-  empty temporary folder, and D2 icons stay links, never fetched. The script never writes
+  also runs in its `SANDBOX` security profile (newer versions), Mermaid's browser has
+  networking turned off, every renderer runs from an
+  empty temporary folder, and D2 images stay links in SVGs. The script never writes
   through a symbolic link.
 - **No dependencies** beyond Node 18+ and the renderer CLIs. Works on macOS, Linux and Windows.
 

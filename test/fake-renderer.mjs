@@ -16,6 +16,8 @@ const formatOf = path => (path.endsWith('.png') ? 'png' : 'svg')
 if (name === 'mmdc') {
   const input = args[args.indexOf('-i') + 1]
   const output = args[args.indexOf('-o') + 1]
+  const p = args.indexOf('-p')
+  if (p !== -1 && process.env.FAKE_LOG) appendFileSync(process.env.FAKE_LOG, `puppeteer ${readFileSync(args[p + 1], 'utf8')}\n`)
   if (readFileSync(input, 'utf8').includes('BROKEN')) {
     process.stderr.write('Error: Parse error on line 2:\n...BROKEN\n---^\nExpecting \'ACTOR\', got \'NEWLINE\'\n    at Parser.parseError (file:///x/mermaid.js:1:1)\n    at run (file:///x/mmdc.js:2:2)\n')
     process.exit(1)

@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os'
 import { basename, delimiter, dirname, extname, join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-export const VERSION = '1.0.1'
+export const VERSION = '1.0.2'
 export const RENDER_TIMEOUT_MS = 60_000
 export const MAX_TITLE = 80
 
@@ -84,8 +84,9 @@ const ANYWHERE = {
   plantuml: [/%\s*(getenv|load_json|loadjson|file_exists|dirpath|filename|filenamenoextension|call_user_func|invoke_procedure|get_variable_value)\s*\(/i, /<img\s*:/i],
   // Imports: `...@file`, `key: @file`, `[@a; @b]`, quoted or not, wherever they sit on a line.
   d2: [/(\.\.\.|:|\[|;)\s*["']?@/],
-  // Image shapes and HTML images are fetched by the renderer's browser.
-  mermaid: [/<img\b/i, /@\{[^}]*\bimg\s*:/i],
+  // Images, image shapes and CSS that loads resources. The browser that renders Mermaid also
+  // runs with networking turned off (see puppeteerConfigFor), so these are a second line.
+  mermaid: [/<img\b/i, /<image\b/i, /@\{[^}]*\bimg\b/i, /url\s*\(/i, /@import\b/i, /themeCSS/i],
 }
 
 function lineAt(source, index) {
@@ -109,9 +110,31 @@ export function unsafeDirective(language, source) {
   return null
 }
 
-// D2 draws PNGs in a browser, which would fetch remote icons and read local ones into the image.
-export function hasD2Icons(source) {
-  return /\bicon\s*:/.test(source)
+// D2 draws PNGs in a browser and bundles every image first, so icons, markdown or HTML blocks
+// and any URL or file reference would be fetched or read into the image. SVGs keep them as links.
+export function hasD2External(source) {
+  return /\bicon\s*:|\|+\s*`*\s*(md|markdown|html)\b|!\[|<img\b|<image\b|\b(https?|file|ftp):|url\s*\(/i.test(source)
+}
+
+// Chrome flags that route every http(s) request, loopback included, to a closed port: Mermaid
+// itself loads from local files, so rendering works and nothing in the diagram reaches the network.
+export const NO_NETWORK_ARGS = ['--proxy-server=http://127.0.0.1:9', '--proxy-bypass-list=<-loopback>']
+
+// The puppeteer config for mmdc: the user's (WHITEBOARD_PUPPETEER_CONFIG) plus NO_NETWORK_ARGS.
+function puppeteerConfigFor(dir) {
+  const userPath = process.env.WHITEBOARD_PUPPETEER_CONFIG || ''
+  if (allowIncludes()) return userPath
+  let base = {}
+  if (userPath) {
+    try {
+      base = JSON.parse(readFileSync(userPath, 'utf8'))
+    } catch {
+      base = {}
+    }
+  }
+  const file = join(dir, 'puppeteer.json')
+  writeFileSync(file, JSON.stringify({ ...base, args: [...(Array.isArray(base.args) ? base.args : []), ...NO_NETWORK_ARGS] }))
+  return file
 }
 
 export function slug(title) {
@@ -293,7 +316,7 @@ export function renderTo(language, bin, source, { dir, format = 'svg', theme = '
   const input = join(dir, `diagram.${r.ext}`)
   const output = join(dir, `diagram.${format}`)
   writeFileSync(input, source.endsWith('\n') ? source : `${source}\n`)
-  const puppeteerConfig = process.env.WHITEBOARD_PUPPETEER_CONFIG || ''
+  const puppeteerConfig = language === 'mermaid' ? puppeteerConfigFor(dir) : ''
   // Run from the empty work folder, so any relative path inside the diagram resolves to nothing.
   const result = run(bin, renderArgv(language, { input, output, dir, format, theme, mermaidConfig, puppeteerConfig }), { cwd: dir })
   if (result.error) {
@@ -524,8 +547,8 @@ export function main(argv = process.argv.slice(2)) {
     }
     const rendered = { svg: svg.path }
     let pngNote = ''
-    if (opts.png && language === 'd2' && hasD2Icons(source) && !allowIncludes()) {
-      pngNote = 'PNG skipped: D2 would fetch or read the icons into the image. The SVG keeps them as links; set WHITEBOARD_ALLOW_INCLUDES=1 for a PNG.'
+    if (opts.png && language === 'd2' && hasD2External(source) && !allowIncludes()) {
+      pngNote = 'PNG skipped: D2 would fetch or read its images, icons or links into the PNG. The SVG keeps them as links; set WHITEBOARD_ALLOW_INCLUDES=1 for a PNG.'
     } else if (opts.png) {
       const pngDir = join(work, 'png')
       mkdirSync(pngDir)

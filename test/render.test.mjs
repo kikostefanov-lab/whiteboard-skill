@@ -7,7 +7,8 @@ import { after, before, describe, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import {
-  byNewestVersion, cleanTitle, failureOf, fenceBlock, languageFrom, parseArgs, renderArgv, slug, stripFences, unsafeDirective, UsageError,
+  byNewestVersion, cleanTitle, failureOf, fenceBlock, hasD2External, languageFrom, NO_NETWORK_ARGS, parseArgs, renderArgv, slug,
+  stripFences, unsafeDirective, UsageError,
 } from '../skills/whiteboard/scripts/render.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -103,6 +104,18 @@ describe('helpers', () => {
     assert.equal(unsafeDirective('mermaid', 'flowchart TD\n  A@{ img: "file:///etc/x.png" }'), 'A@{ img: "file:///etc/x.png" }')
     assert.equal(unsafeDirective('mermaid', 'flowchart TD\n  A["<img src=\'http://169.254.169.254/\'>"]'), 'A["<img src=\'http://169.254.169.254/\'>"]')
     assert.equal(unsafeDirective('mermaid', 'flowchart TD\n  A[an img: tag] --> B'), null)
+    assert.equal(unsafeDirective('mermaid', 'flowchart TD\n  A@{ "img" : "x.png" }'), 'A@{ "img" : "x.png" }')
+    assert.equal(unsafeDirective('mermaid', 'flowchart TD\n  style A fill:url(http://x/y)'), 'style A fill:url(http://x/y)')
+    assert.equal(unsafeDirective('mermaid', '%%{init: {"themeCSS": ".a{}"}}%%\nflowchart TD'), '%%{init: {"themeCSS": ".a{}"}}%%')
+    assert.equal(unsafeDirective('mermaid', 'flowchart TD\n  A["<image href=x>"]'), 'A["<image href=x>"]')
+    assert.equal(unsafeDirective('mermaid', '%%{init: {"theme": "forest"}}%%\nflowchart TD\n  A --> B'), null)
+  })
+
+  test('hasD2External finds anything D2 would fetch for a PNG', () => {
+    for (const src of ['a: {icon: x.svg}', 'a: |md ![x](y.png) |', 'a: |||md\n# hi\n|||', 'a: |`html <b>x</b>`|', 'a.link: https://x', 'a: "file:///etc/x"']) {
+      assert.equal(hasD2External(src), true, src)
+    }
+    assert.equal(hasD2External('a -> b: calls\nb.shape: cylinder'), false)
   })
 
   test('byNewestVersion sorts nvm folders newest first', () => {
@@ -262,6 +275,26 @@ describe('cli', { skip: process.platform === 'win32' && 'POSIX fake renderers' }
       env: { WHITEBOARD_ALLOW_INCLUDES: '1' },
     }).out)
     assert.ok(allowed.files.png)
+  })
+
+  test('Mermaid renders in a browser with networking off, keeping the user puppeteer config', () => {
+    freshCwd()
+    assert.equal(cli(['--title', 'Net'], { input: 'flowchart TD\n A-->B' }).code, 0)
+    const config = JSON.parse(/^puppeteer (.*)$/m.exec(readFileSync(log, 'utf8'))[1])
+    assert.deepEqual(config.args, NO_NETWORK_ARGS)
+    const user = join(root, 'user-puppeteer.json')
+    writeFileSync(user, JSON.stringify({ args: ['--no-sandbox'], headless: 'shell' }))
+    writeFileSync(log, '')
+    assert.equal(cli(['--title', 'Net'], { input: 'flowchart TD\n A-->B', env: { WHITEBOARD_PUPPETEER_CONFIG: user } }).code, 0)
+    const merged = JSON.parse(/^puppeteer (.*)$/m.exec(readFileSync(log, 'utf8'))[1])
+    assert.deepEqual(merged, { headless: 'shell', args: ['--no-sandbox', ...NO_NETWORK_ARGS] })
+  })
+
+  test('D2 PNG is skipped for markdown blocks with images', () => {
+    freshCwd()
+    const r = JSON.parse(cli(['--title', 'Md', '--language', 'd2', '--png', '--json'], { input: 'a: |md ![x](/etc/x.png) |' }).out)
+    assert.equal(r.ok, true)
+    assert.equal(r.files.png, undefined)
   })
 
   test('refuses to write through a symbolic link', { skip: process.platform === 'win32' }, () => {
