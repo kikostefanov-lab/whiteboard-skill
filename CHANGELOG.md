@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.1.0 — 2026-11-14
+
+- **Mermaid renders in its own sandbox instead of through `mmdc`.** `mermaid-render.mjs` uses
+  the Puppeteer and Mermaid bundle from your mermaid-cli install, so installation is
+  unchanged. It renders in a blank page that cannot load anything: every request except
+  `data:` is aborted, a `default-src 'none'` Content Security Policy is set, and Chrome's
+  http(s) traffic goes to a closed proxy port. `securityLevel` is always `strict`.
+- Because the sandbox blocks loads whatever the source says, the Mermaid pattern checks
+  from 1.0.1–1.0.4 are gone: `<img>`, image shapes, backslashes and any HTML Mermaid accepts
+  work again. Blocked images render blank instead of failing the diagram.
+- `npm run sandbox` (run in CI) proves it against real Chrome. It renders diagrams that load
+  remote resources through image shapes, `<img>` and `themeCSS`, and checks that every load
+  is attempted and blocked and that a local server receives nothing. It also checks that an
+  image on disk never reaches the PNG, with controls showing each check would catch a leak.
+- PNGs are rendered at 2x for sharper output. Rendering takes about half a second.
+- `WHITEBOARD_MERMAID_CLI_DIR` points at the mermaid-cli package when it can't be found
+  from `mmdc`. Fixed: a pinned `WHITEBOARD_MMDC` skipped that lookup.
+
 ## 1.0.4 — 2026-11-14
 
 - Mermaid: any backslash is refused, so CSS, JSON and YAML escapes in styles, `%%{init}%%`

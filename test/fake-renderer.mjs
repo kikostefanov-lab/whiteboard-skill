@@ -13,7 +13,7 @@ const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex')
 const write = (path, format) => writeFileSync(path, format === 'png' ? PNG : SVG)
 const formatOf = path => (path.endsWith('.png') ? 'png' : 'svg')
 
-if (name === 'mmdc') {
+if (name === 'mmdc' || name === 'mermaid-render') {
   const input = args[args.indexOf('-i') + 1]
   const output = args[args.indexOf('-o') + 1]
   const p = args.indexOf('-p')

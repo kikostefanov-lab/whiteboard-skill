@@ -35,14 +35,18 @@ skills.
   from the real code with its real names.
 - **Local and private.** Nothing is uploaded. `--share` (a secret GitHub gist) runs only when
   you ask for it.
-- **Safe with untrusted input.** The agent may draw from READMEs or issues it didn't write.
-  So anything that reads files, environment variables or URLs into the image is refused
-  unless `WHITEBOARD_ALLOW_INCLUDES=1` is set: PlantUML directives outside an allowlist,
-  `%getenv` and similar built-ins, `<img:…>`, D2 `@` imports and Mermaid images. PlantUML
-  also runs in its `SANDBOX` security profile (newer versions), Mermaid's browser has
-  networking turned off, every renderer runs from an
-  empty temporary folder, and D2 images stay links in SVGs. The script never writes
-  through a symbolic link.
+- **Safe with untrusted input.** The agent may draw from READMEs or issues it didn't write,
+  so a diagram can never pull local files, environment variables or URLs into the image:
+  - **Mermaid** renders in a sandboxed browser page. Every request except inline `data:` is
+    aborted, a `default-src 'none'` Content Security Policy is set, and Chrome's traffic goes
+    to a closed proxy port. `npm run sandbox` checks this against real Chrome: remote loads
+    are attempted and blocked, a local server receives nothing, and an image on disk never
+    reaches the PNG.
+  - **PlantUML** accepts only an allowlist of preprocessor directives. It refuses `%getenv`-style
+    built-ins and `<img:…>`, and runs in its `SANDBOX` security profile.
+  - **D2** refuses `@` imports and keeps images as links (no PNG when a diagram has any).
+  - Every renderer runs from an empty temporary folder, and output is never written through a
+    symbolic link. `WHITEBOARD_ALLOW_INCLUDES=1` lifts the restrictions when you want includes.
 - **No dependencies** beyond Node 18+ and the renderer CLIs. Works on macOS, Linux and Windows.
 
 ## Install
@@ -119,6 +123,9 @@ node skills/whiteboard/scripts/render.mjs --title "Auth flow" --file auth.mmd --
 
 If a renderer is installed but not found (desktop apps often start without your shell's
 `PATH`), set `WHITEBOARD_MMDC`, `WHITEBOARD_D2` or `WHITEBOARD_PLANTUML` to its full path.
+Mermaid diagrams are drawn by the skill's own sandboxed renderer, using the browser and Mermaid
+bundle that come with your mermaid-cli install; `WHITEBOARD_MERMAID_CLI_DIR` points at that
+package if it can't be found from `mmdc`.
 
 ## Relationship to the Claude Code whiteboard mod
 
@@ -133,6 +140,7 @@ rendering as a standard skill, without the pane, for any agent.
 npm test          # unit and CLI tests against fake renderers
 npm run validate  # SKILL.md against the Agent Skills spec, links, versions
 npm run smoke     # renders every example in references/syntax.md with the real renderers
+npm run sandbox   # proves the Mermaid sandbox against real Chrome
 npm run package   # dist/whiteboard-<version>.zip
 ```
 

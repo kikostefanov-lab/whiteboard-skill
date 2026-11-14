@@ -5,7 +5,7 @@ license: MIT
 compatibility: Needs Node.js 18+ and a shell. Mermaid diagrams need @mermaid-js/mermaid-cli (mmdc); D2 and PlantUML are optional. Rendering is local; nothing is uploaded unless the user asks to share.
 metadata:
   author: Kiko Stefanov
-  version: "1.0.4"
+  version: "1.1.0"
   repository: https://github.com/kikostefanov-lab/whiteboard-skill
 ---
 
@@ -68,14 +68,19 @@ you exactly what is wrong when it does not parse.
 Exit codes: `0` rendered, `1` source rejected (fix it and rerun), `2` bad arguments,
 `3` renderer not installed.
 
-Anything that reads local files, environment variables or URLs into the image is refused:
-PlantUML directives other than the plain ones (`!define`, `!if`, `!procedure`, `!$var`,
-`!theme <name>`, `!include <stdlib>` …), `%getenv` and similar built-ins, `<img:…>`, D2 `@`
-imports, and in Mermaid any image, `url(…)`, any backslash (use `<br>` for line breaks), and HTML other than
-simple formatting (`<br>`, `<b>`, `<i>`, `<em>`, `<strong>`, `<code>`, `<span>` without
-attributes). Inline the content or drop the image instead. D2 diagrams with icons, block
-strings, HTML or URLs render to SVG only (they stay links). Only if the user explicitly wants
-includes or images, rerun with `WHITEBOARD_ALLOW_INCLUDES=1`.
+Diagrams never read local files, environment variables or URLs into the image:
+
+- **Mermaid** renders in a sandboxed browser page that cannot load anything from the network
+  or disk. Any Mermaid syntax works, but remote or local images and CSS resources stay
+  blank; inline an image as a `data:` URL if it must appear.
+- **PlantUML**: directives other than the plain ones (`!define`, `!if`, `!procedure`, `!$var`,
+  `!theme <name>`, `!include <stdlib>` …), `%getenv` and similar built-ins, and `<img:…>` are
+  refused. Inline the content instead.
+- **D2**: `@` imports are refused. Diagrams with icons, block strings, HTML or URLs render to
+  SVG only, where they stay links.
+
+Only if the user explicitly wants includes or external images, rerun with
+`WHITEBOARD_ALLOW_INCLUDES=1`.
 
 Redrawing with the same title keeps the earlier files in `diagrams/.versions/<slug>/<n>/`, so
 iterating on a diagram never loses the previous version.
@@ -91,7 +96,9 @@ packages yourself unless they ask:
 
 If a renderer is installed but not found (common in desktop apps that start without the
 login shell's PATH), set `WHITEBOARD_MMDC`, `WHITEBOARD_D2` or `WHITEBOARD_PLANTUML` to its
-full path. When nothing can be installed, give the Mermaid source in a fenced block so it
+full path. Mermaid rendering uses the browser and Mermaid bundle that come with mermaid-cli;
+if the script finds `mmdc` but not its package, set `WHITEBOARD_MERMAID_CLI_DIR` to the
+`@mermaid-js/mermaid-cli` folder. When nothing can be installed, give the Mermaid source in a fenced block so it
 still renders on GitHub, and say it was not checked by a renderer.
 
 ## Good diagrams

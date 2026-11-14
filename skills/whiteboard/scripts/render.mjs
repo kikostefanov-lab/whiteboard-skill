@@ -6,12 +6,12 @@
 // 2 bad arguments, 3 renderer not installed.
 
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, delimiter, dirname, extname, join, relative, resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
-export const VERSION = '1.0.4'
+export const VERSION = '1.1.0'
 export const RENDER_TIMEOUT_MS = 60_000
 export const MAX_TITLE = 80
 
@@ -30,7 +30,7 @@ const SYNTAX_ERROR =
   /Parse error|Syntax error|Lexical error|No diagram type detected|UnknownDiagramError|^err:|\berr: |failed to compile|Error line \d+/im
 
 // A frame of the stack mmdc prints after the message: `    at fn (file:...)` or `Parser.parse (https://...)`.
-const STACK_FRAME = /^\s+at\s|^[\w.$#]+ \((?:https?|file):\/\//
+const STACK_FRAME = /^\s+at\s|^[\w.$#]+ \((?:<anonymous>|pptr:|https?:\/\/|file:\/\/)/
 
 const USAGE = `whiteboard render ${VERSION}
 
@@ -84,21 +84,8 @@ const ANYWHERE = {
   plantuml: [/%\s*(getenv|load_json|loadjson|file_exists|dirpath|filename|filenamenoextension|call_user_func|invoke_procedure|get_variable_value)\s*\(/i, /<img\s*:/i],
   // Imports: `...@file`, `key: @file`, `[@a; @b]`, quoted or not, wherever they sit on a line.
   d2: [/(\.\.\.|:|\[|;)\s*["']?@/],
-  // The browser that renders Mermaid has networking off (see puppeteerConfigFor) but loads its
-  // page from a local file, so local images would still render. Labels may hold only simple
-  // formatting tags with no resource attributes; image shapes and CSS that loads resources are
-  // refused. So is every backslash: CSS, JSON and YAML escapes (in styles, %%{init}%% or
-  // frontmatter) could spell any of these in disguise, and Mermaid breaks lines with <br>.
-  mermaid: [
-    /\\/,
-    /<\/?(?!(br|b|i|u|em|strong|sub|sup|small|code|span|p|hr)\b)[a-z]/i,
-    /<[^>]*\b(src|srcset|poster|background|data|href|xlink:href|style)\s*=/i,
-    /@\{[^}]*\bimg\b/i,
-    /url\s*\(/i,
-    /\b(-webkit-image-set|image-set|image|cross-fade|element|src)\(/i,
-    /@(import|font-face)\b/i,
-    /themeCSS/i,
-  ],
+  // Mermaid needs no source checks: mermaid-render.mjs renders it in a page that cannot load
+  // anything from the network or disk, whatever the diagram contains.
 }
 
 function lineAt(source, index) {
@@ -130,25 +117,31 @@ export function hasD2External(source) {
   return /\bicon\s*:|:\s*\||<[a-z!/?]|&(#|[a-z]+;)|!\[|[a-z][\w+.-]*:\/\/|\bfile:|url\s*\(|\\/i.test(source)
 }
 
-// Chrome flags that route every http(s) request, loopback included, to a closed port: Mermaid
-// itself loads from local files, so rendering works and nothing in the diagram reaches the network.
-export const NO_NETWORK_ARGS = ['--proxy-server=http://127.0.0.1:9', '--proxy-bypass-list=<-loopback>']
+const MERMAID_CLI = '@mermaid-js/mermaid-cli'
+const MERMAID_HELPER = () => process.env.WHITEBOARD_MERMAID_RENDERER || join(dirname(fileURLToPath(import.meta.url)), 'mermaid-render.mjs')
 
-// The puppeteer config for mmdc: the user's (WHITEBOARD_PUPPETEER_CONFIG) plus NO_NETWORK_ARGS.
-function puppeteerConfigFor(dir) {
-  const userPath = process.env.WHITEBOARD_PUPPETEER_CONFIG || ''
-  if (allowIncludes()) return userPath
-  let base = {}
-  if (userPath) {
-    try {
-      base = JSON.parse(readFileSync(userPath, 'utf8'))
-    } catch {
-      base = {}
-    }
+function isMermaidCli(dir) {
+  try {
+    return JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).name === MERMAID_CLI
+  } catch {
+    return false
   }
-  const file = join(dir, 'puppeteer.json')
-  writeFileSync(file, JSON.stringify({ ...base, args: [...(Array.isArray(base.args) ? base.args : []), ...NO_NETWORK_ARGS] }))
-  return file
+}
+
+// The @mermaid-js/mermaid-cli package folder behind an mmdc binary: up from the binary's real
+// path (npm and Homebrew symlink it), or beside it (npm's Windows .cmd shims, nvm and npm prefixes).
+export function mermaidCliDir(bin) {
+  const pinned = process.env.WHITEBOARD_MERMAID_CLI_DIR
+  if (pinned) return isMermaidCli(pinned) || process.env.WHITEBOARD_MERMAID_RENDERER ? pinned : null
+  let dir
+  try {
+    dir = dirname(realpathSync(bin))
+  } catch {
+    dir = dirname(bin)
+  }
+  for (let i = 0; i < 6 && dir !== dirname(dir); i++, dir = dirname(dir)) if (isMermaidCli(dir)) return dir
+  const near = [join(dirname(bin), 'node_modules', MERMAID_CLI), join(dirname(bin), '..', 'lib', 'node_modules', MERMAID_CLI)]
+  return near.find(isMermaidCli) ?? null
 }
 
 export function slug(title) {
@@ -191,17 +184,17 @@ export function fenceBlock(language, source) {
   return `${fence}${language}\n${source}\n${fence}`
 }
 
-export function renderArgv(language, { input, output, dir, format, theme, mermaidConfig, puppeteerConfig }) {
+export function renderArgv(language, { input, output, dir, format, theme, mermaidConfig, puppeteerConfig, helper, cliDir, allowExternal }) {
   const dark = theme === 'dark'
   switch (language) {
     case 'mermaid':
-      // --no-font-embed: mmdc 11+ inlines ~160 KB of web fonts into every SVG otherwise.
+      // Runs under `node`: our sandboxed renderer, using the mermaid-cli install's Puppeteer and Mermaid.
       return [
-        '-i', input, '-o', output, '-b', dark ? '#1e1e1e' : 'white', '-q',
-        ...(format === 'svg' ? ['--no-font-embed'] : []),
-        ...(theme !== 'default' ? ['-t', theme] : []),
-        ...(mermaidConfig ? ['-c', mermaidConfig] : []),
-        ...(puppeteerConfig ? ['-p', puppeteerConfig] : []),
+        helper, '--cli', cliDir, '-i', input, '-o', output, '--background', dark ? '#1e1e1e' : 'white',
+        ...(theme !== 'default' ? ['--theme', theme] : []),
+        ...(mermaidConfig ? ['--config', mermaidConfig] : []),
+        ...(puppeteerConfig ? ['--puppeteer', puppeteerConfig] : []),
+        ...(allowExternal ? ['--allow-external'] : []),
       ]
     case 'd2':
       // --bundle=false: leave icon URLs as links instead of fetching them at render time.
@@ -302,10 +295,14 @@ function fallbackLookup(bin) {
 export function findRenderer(language) {
   const r = RENDERERS[language]
   const pinned = process.env[r.env]
-  if (pinned) return isFile(pinned) ? { path: pinned } : { error: `${r.env} is set to ${pinned}, which does not exist.` }
-  const path = onPath(r.bin, process.env.PATH) ?? fallbackLookup(r.bin)
-  if (path) return { path }
-  return { error: `${r.bin} (${r.label}) was not found. Install it with: ${r.install}. Or set ${r.env} to its full path.` }
+  if (pinned && !isFile(pinned)) return { error: `${r.env} is set to ${pinned}, which does not exist.` }
+  const path = pinned || onPath(r.bin, process.env.PATH) || fallbackLookup(r.bin)
+  if (!path) return { error: `${r.bin} (${r.label}) was not found. Install it with: ${r.install}. Or set ${r.env} to its full path.` }
+  if (language !== 'mermaid') return { path }
+  const cliDir = mermaidCliDir(path)
+  return cliDir
+    ? { path, cliDir }
+    : { error: `Found ${path} but not the ${MERMAID_CLI} package behind it. Reinstall with: ${r.install}. Or set WHITEBOARD_MERMAID_CLI_DIR to the package folder.` }
 }
 
 // ---------------------------------------------------------------- running renderers
@@ -325,14 +322,21 @@ function run(bin, args, { timeout = RENDER_TIMEOUT_MS, cwd } = {}) {
   return result
 }
 
-export function renderTo(language, bin, source, { dir, format = 'svg', theme = 'default', mermaidConfig = '' }) {
+export function renderTo(language, renderer, source, { dir, format = 'svg', theme = 'default', mermaidConfig = '' }) {
   const r = RENDERERS[language]
   const input = join(dir, `diagram.${r.ext}`)
   const output = join(dir, `diagram.${format}`)
   writeFileSync(input, source.endsWith('\n') ? source : `${source}\n`)
-  const puppeteerConfig = language === 'mermaid' ? puppeteerConfigFor(dir) : ''
+  const mermaid = language === 'mermaid'
+  const argv = renderArgv(language, {
+    input, output, dir, format, theme, mermaidConfig,
+    puppeteerConfig: process.env.WHITEBOARD_PUPPETEER_CONFIG || '',
+    helper: MERMAID_HELPER(),
+    cliDir: renderer.cliDir,
+    allowExternal: allowIncludes(),
+  })
   // Run from the empty work folder, so any relative path inside the diagram resolves to nothing.
-  const result = run(bin, renderArgv(language, { input, output, dir, format, theme, mermaidConfig, puppeteerConfig }), { cwd: dir })
+  const result = run(mermaid ? process.execPath : renderer.path, argv, { cwd: dir, timeout: RENDER_TIMEOUT_MS })
   if (result.error) {
     const timedOut = result.error.code === 'ETIMEDOUT' || result.signal === 'SIGTERM'
     return {
@@ -459,7 +463,7 @@ export function doctor() {
     }
     const dir = mkdtempSync(join(tmpdir(), 'whiteboard-doctor-'))
     try {
-      const result = renderTo(language, found.path, SAMPLES[language], { dir })
+      const result = renderTo(language, found, SAMPLES[language], { dir })
       checks.push({ label: r.label, ok: result.ok, detail: result.ok ? `${found.path} renders` : `${found.path} failed a test render: ${result.message}` })
     } finally {
       rmSync(dir, { recursive: true, force: true })
@@ -548,7 +552,7 @@ export function main(argv = process.argv.slice(2)) {
 
   const work = mkdtempSync(join(tmpdir(), 'whiteboard-'))
   try {
-    const svg = renderTo(language, found.path, source, { dir: work, format: 'svg', theme, mermaidConfig })
+    const svg = renderTo(language, found, source, { dir: work, format: 'svg', theme, mermaidConfig })
     if (!svg.ok) {
       report({ ok: false, kind: svg.kind, language, message: svg.message })
       if (!opts.json) process.stderr.write(`Render failed (${svg.kind}, ${r.label}):\n${svg.message}\n\nFix the source and run again.\n`)
@@ -566,7 +570,7 @@ export function main(argv = process.argv.slice(2)) {
     } else if (opts.png) {
       const pngDir = join(work, 'png')
       mkdirSync(pngDir)
-      const png = renderTo(language, found.path, source, { dir: pngDir, format: 'png', theme, mermaidConfig })
+      const png = renderTo(language, found, source, { dir: pngDir, format: 'png', theme, mermaidConfig })
       if (png.ok) rendered.png = png.path
       else pngNote = `PNG failed: ${png.message}`
     }

@@ -9,7 +9,7 @@
       "name": "whiteboard",
       "source": "./",
       "description": "Draw Mermaid, D2 and PlantUML diagrams rendered locally to SVG, with syntax errors fed back so the agent fixes them.",
-      "version": "1.0.4",
+      "version": "1.1.0",
       "license": "MIT"
     }
   ]

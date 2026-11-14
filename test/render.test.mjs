@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { after, before, describe, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import {
-  byNewestVersion, cleanTitle, failureOf, fenceBlock, hasD2External, languageFrom, NO_NETWORK_ARGS, parseArgs, renderArgv, slug,
+  byNewestVersion, cleanTitle, failureOf, fenceBlock, hasD2External, languageFrom, mermaidCliDir, parseArgs, renderArgv, slug,
   stripFences, unsafeDirective, UsageError,
 } from '../skills/whiteboard/scripts/render.mjs'
 
@@ -57,11 +57,10 @@ describe('helpers', () => {
   })
 
   test('renderArgv', () => {
-    const base = { input: 'i.mmd', output: 'o.svg', dir: 'd', format: 'svg', theme: 'default', mermaidConfig: '', puppeteerConfig: '' }
-    assert.deepEqual(renderArgv('mermaid', base), ['-i', 'i.mmd', '-o', 'o.svg', '-b', 'white', '-q', '--no-font-embed'])
-    assert.deepEqual(renderArgv('mermaid', { ...base, theme: 'dark', mermaidConfig: 'c.json', puppeteerConfig: 'p.json' }),
-      ['-i', 'i.mmd', '-o', 'o.svg', '-b', '#1e1e1e', '-q', '--no-font-embed', '-t', 'dark', '-c', 'c.json', '-p', 'p.json'])
-    assert.ok(!renderArgv('mermaid', { ...base, format: 'png' }).includes('--no-font-embed'))
+    const base = { input: 'i.mmd', output: 'o.svg', dir: 'd', format: 'svg', theme: 'default', mermaidConfig: '', puppeteerConfig: '', helper: 'h.mjs', cliDir: 'cli' }
+    assert.deepEqual(renderArgv('mermaid', base), ['h.mjs', '--cli', 'cli', '-i', 'i.mmd', '-o', 'o.svg', '--background', 'white'])
+    assert.deepEqual(renderArgv('mermaid', { ...base, theme: 'dark', mermaidConfig: 'c.json', puppeteerConfig: 'p.json', allowExternal: true }),
+      ['h.mjs', '--cli', 'cli', '-i', 'i.mmd', '-o', 'o.svg', '--background', '#1e1e1e', '--theme', 'dark', '--config', 'c.json', '--puppeteer', 'p.json', '--allow-external'])
     assert.deepEqual(renderArgv('d2', { ...base, theme: 'dark' }), ['--theme=200', '--pad=24', '--bundle=false', 'i.mmd', 'o.svg'])
     assert.deepEqual(renderArgv('d2', { ...base, format: 'png', output: 'o.png' }), ['--pad=24', 'i.mmd', 'o.png'])
     assert.deepEqual(renderArgv('plantuml', { ...base, format: 'png' }), ['-tpng', '-o', 'd', 'i.mmd'])
@@ -100,43 +99,35 @@ describe('helpers', () => {
     for (const ok of ['!theme cerulean', '!$x = 1', '!define FOO bar', '!procedure $a()', '!endprocedure', '!if $x', '!endif', '!pragma layout smetana']) {
       assert.equal(unsafeDirective('plantuml', `@startuml\n${ok}\n@enduml`), null, ok)
     }
-    // Mermaid image shapes and HTML images.
-    assert.equal(unsafeDirective('mermaid', 'flowchart TD\n  A@{ img: "file:///etc/x.png" }'), 'A@{ img: "file:///etc/x.png" }')
-    assert.equal(unsafeDirective('mermaid', 'flowchart TD\n  A["<img src=\'http://169.254.169.254/\'>"]'), 'A["<img src=\'http://169.254.169.254/\'>"]')
-    assert.equal(unsafeDirective('mermaid', 'flowchart TD\n  A[an img: tag] --> B'), null)
-    assert.equal(unsafeDirective('mermaid', 'flowchart TD\n  A@{ "img" : "x.png" }'), 'A@{ "img" : "x.png" }')
-    assert.equal(unsafeDirective('mermaid', 'flowchart TD\n  style A fill:url(http://x/y)'), 'style A fill:url(http://x/y)')
-    assert.equal(unsafeDirective('mermaid', '%%{init: {"themeCSS": ".a{}"}}%%\nflowchart TD'), '%%{init: {"themeCSS": ".a{}"}}%%')
-    assert.equal(unsafeDirective('mermaid', 'flowchart TD\n  A["<image href=x>"]'), 'A["<image href=x>"]')
-    assert.equal(unsafeDirective('mermaid', '%%{init: {"theme": "forest"}}%%\nflowchart TD\n  A --> B'), null)
+    // Mermaid is not pattern-checked: its renderer's sandbox blocks every load
+    // (proved against real Chrome by scripts/sandbox-check.mjs).
+    for (const src of ['flowchart TD\n  A@{ img: "file:///etc/x.png" }', 'flowchart TD\n  A["<img src=x>"]', '%%{init: {"themeCSS": ".a{fill:url(x)}"}}%%\nflowchart TD', 'flowchart TD\n  A["C:\\\\path"]']) {
+      assert.equal(unsafeDirective('mermaid', src), null, src)
+    }
   })
 
-  test('unsafeDirective: Mermaid HTML is an allowlist, CSS escapes refused', () => {
-    for (const bad of [
-      'A["<video poster=/home/me/x.png>"]',
-      'A["<span style=\'background:x\'>a</span>"]',
-      'A["<b data=x>a</b>"]',
-      'A["<object>"]',
-      'A["<svg><foreignObject/></svg>"]',
-      'style A fill:\\75 rl(/x.png)',
-      'classDef c fill:\\000075rl(x)',
-      'A --> B; style A fill:\\75 rl(/x.png)',
-      'style A fill:image-set("/home/me/x.png" 1x)',
-      'style A fill:-webkit-image-set("/x.png" 1x)',
-      'style A fill:cross-fade("/a.png", "/b.png", 50%)',
-    ]) assert.ok(unsafeDirective('mermaid', `flowchart TD\n  ${bad}`), bad)
-    // Escapes inside the init directive or YAML frontmatter.
-    assert.ok(unsafeDirective('mermaid', '%%{init: {"themeVariables": {"primaryColor": "\\u0075rl(/x)"}}}%%\nflowchart TD'))
-    assert.ok(unsafeDirective('mermaid', '---\nconfig:\n  themeVariables:\n    primaryColor: "\\x75rl(/x)"\n---\nflowchart TD'))
-    assert.equal(unsafeDirective('mermaid', '---\ntitle: Checkout\nconfig:\n  theme: forest\n---\nflowchart TD\n  A --> B'), null)
-    for (const ok of [
-      'A["line one<br>line two"]',
-      'A["<b>bold</b> and <i>it</i><br/>x"]',
-      'A <--> B',
-      'A -- x < y --> B',
-      'style A fill:#f9f,stroke:#333',
-    ]) assert.equal(unsafeDirective('mermaid', `flowchart TD\n  ${ok}`), null, ok)
-    assert.equal(unsafeDirective('mermaid', 'classDiagram\n  Animal <|-- Duck'), null)
+  test('mermaidCliDir finds the package behind mmdc', { skip: process.platform === 'win32' && 'symlinks' }, () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'whiteboard-cli-'))
+    try {
+      // npm/nvm layout: bin/mmdc -> ../lib/node_modules/@mermaid-js/mermaid-cli/src/cli.js
+      const pkg = join(tmp, 'lib', 'node_modules', '@mermaid-js', 'mermaid-cli')
+      mkdirSync(join(pkg, 'src'), { recursive: true })
+      writeFileSync(join(pkg, 'package.json'), '{"name":"@mermaid-js/mermaid-cli"}')
+      writeFileSync(join(pkg, 'src', 'cli.js'), '')
+      mkdirSync(join(tmp, 'bin'))
+      symlinkSync(join(pkg, 'src', 'cli.js'), join(tmp, 'bin', 'mmdc'))
+      assert.equal(realpathSync(mermaidCliDir(join(tmp, 'bin', 'mmdc'))), realpathSync(pkg))
+      // Windows npm shim layout: <prefix>/mmdc.cmd beside <prefix>/node_modules/@mermaid-js/mermaid-cli
+      const shim = join(tmp, 'shim')
+      mkdirSync(join(shim, 'node_modules', '@mermaid-js', 'mermaid-cli'), { recursive: true })
+      writeFileSync(join(shim, 'node_modules', '@mermaid-js', 'mermaid-cli', 'package.json'), '{"name":"@mermaid-js/mermaid-cli"}')
+      writeFileSync(join(shim, 'mmdc.cmd'), '')
+      assert.equal(mermaidCliDir(join(shim, 'mmdc.cmd')), join(shim, 'node_modules', '@mermaid-js', 'mermaid-cli'))
+      writeFileSync(join(tmp, 'lonely-mmdc'), '')
+      assert.equal(mermaidCliDir(join(tmp, 'lonely-mmdc')), null)
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
   })
 
   test('hasD2External finds anything D2 would fetch for a PNG', () => {
@@ -165,7 +156,8 @@ describe('cli', { skip: process.platform === 'win32' && 'POSIX fake renderers' }
     root = mkdtempSync(join(tmpdir(), 'whiteboard-test-'))
     bin = join(root, 'bin')
     mkdirSync(bin)
-    for (const name of ['mmdc', 'd2', 'plantuml']) {
+    // mmdc only has to exist (it locates mermaid-cli); mermaid-render.mjs stands in for our sandboxed renderer.
+    for (const name of ['mmdc', 'd2', 'plantuml', 'mermaid-render.mjs']) {
       copyFileSync(join(here, 'fake-renderer.mjs'), join(bin, name))
       chmodSync(join(bin, name), 0o755)
     }
@@ -183,6 +175,10 @@ describe('cli', { skip: process.platform === 'win32' && 'POSIX fake renderers' }
       env: {
         ...process.env,
         WHITEBOARD_MMDC: join(bin, 'mmdc'),
+        WHITEBOARD_MERMAID_RENDERER: join(bin, 'mermaid-render.mjs'),
+        WHITEBOARD_MERMAID_CLI_DIR: bin,
+        WHITEBOARD_PUPPETEER_CONFIG: '',
+        WHITEBOARD_ALLOW_INCLUDES: '',
         WHITEBOARD_D2: join(bin, 'd2'),
         WHITEBOARD_PLANTUML: join(bin, 'plantuml'),
         WHITEBOARD_THEME: '',
@@ -308,17 +304,25 @@ describe('cli', { skip: process.platform === 'win32' && 'POSIX fake renderers' }
     assert.ok(allowed.files.png)
   })
 
-  test('Mermaid renders in a browser with networking off, keeping the user puppeteer config', () => {
+  test('Mermaid goes to the sandboxed renderer, with the puppeteer config and sandbox switch', () => {
     freshCwd()
     assert.equal(cli(['--title', 'Net'], { input: 'flowchart TD\n A-->B' }).code, 0)
-    const config = JSON.parse(/^puppeteer (.*)$/m.exec(readFileSync(log, 'utf8'))[1])
-    assert.deepEqual(config.args, NO_NETWORK_ARGS)
+    const call = JSON.parse(/^mermaid-render (.*)$/m.exec(readFileSync(log, 'utf8'))[1])
+    assert.deepEqual(call.slice(0, 2), ['--cli', bin])
+    assert.ok(!call.includes('--allow-external') && !call.includes('--puppeteer'))
     const user = join(root, 'user-puppeteer.json')
-    writeFileSync(user, JSON.stringify({ args: ['--no-sandbox'], headless: 'shell' }))
+    writeFileSync(user, '{"args":["--no-sandbox"]}')
     writeFileSync(log, '')
-    assert.equal(cli(['--title', 'Net'], { input: 'flowchart TD\n A-->B', env: { WHITEBOARD_PUPPETEER_CONFIG: user } }).code, 0)
-    const merged = JSON.parse(/^puppeteer (.*)$/m.exec(readFileSync(log, 'utf8'))[1])
-    assert.deepEqual(merged, { headless: 'shell', args: ['--no-sandbox', ...NO_NETWORK_ARGS] })
+    assert.equal(cli(['--title', 'Net'], { input: 'flowchart TD\n A-->B', env: { WHITEBOARD_PUPPETEER_CONFIG: user, WHITEBOARD_ALLOW_INCLUDES: '1' } }).code, 0)
+    const open = JSON.parse(/^mermaid-render (.*)$/m.exec(readFileSync(log, 'utf8'))[1])
+    assert.deepEqual(open.slice(-3), ['--puppeteer', user, '--allow-external'])
+  })
+
+  test('a mermaid-cli that cannot be located exits 3', () => {
+    freshCwd()
+    const r = cli(['--title', 'X'], { input: 'flowchart TD', env: { WHITEBOARD_MERMAID_CLI_DIR: '', WHITEBOARD_MERMAID_RENDERER: '' } })
+    assert.equal(r.code, 3)
+    assert.match(r.err, /WHITEBOARD_MERMAID_CLI_DIR/)
   })
 
   test('D2 PNG is skipped for markdown blocks with images', () => {
@@ -380,8 +384,8 @@ describe('cli', { skip: process.platform === 'win32' && 'POSIX fake renderers' }
     assert.equal(r.code, 0, r.err)
     assert.ok(existsSync(join(cwd, 'docs', 'img', 'dark.svg')))
     const call = readFileSync(log, 'utf8')
-    assert.match(call, /"-t","dark"/)
-    assert.match(call, /"-b","#1e1e1e"/)
+    assert.match(call, /"--theme","dark"/)
+    assert.match(call, /"--background","#1e1e1e"/)
   })
 
   test('a missing renderer exits 3 with the install command', () => {

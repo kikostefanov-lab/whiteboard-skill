@@ -43,3 +43,4 @@ jobs:
           echo "WHITEBOARD_PUPPETEER_CONFIG=$RUNNER_TEMP/puppeteer.json" >> "$GITHUB_ENV"
       - run: node skills/whiteboard/scripts/render.mjs --doctor
       - run: npm run smoke -- --all
+      - run: npm run sandbox
