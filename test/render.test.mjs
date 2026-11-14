@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { after, before, describe, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import {
-  byNewestVersion, cleanTitle, failureOf, fenceBlock, languageFrom, parseArgs, renderArgv, slug, stripFences, UsageError,
+  byNewestVersion, cleanTitle, failureOf, fenceBlock, languageFrom, parseArgs, renderArgv, slug, stripFences, unsafeDirective, UsageError,
 } from '../skills/whiteboard/scripts/render.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -61,7 +61,8 @@ describe('helpers', () => {
     assert.deepEqual(renderArgv('mermaid', { ...base, theme: 'dark', mermaidConfig: 'c.json', puppeteerConfig: 'p.json' }),
       ['-i', 'i.mmd', '-o', 'o.svg', '-b', '#1e1e1e', '-q', '--no-font-embed', '-t', 'dark', '-c', 'c.json', '-p', 'p.json'])
     assert.ok(!renderArgv('mermaid', { ...base, format: 'png' }).includes('--no-font-embed'))
-    assert.deepEqual(renderArgv('d2', { ...base, theme: 'dark' }), ['--theme=200', '--pad=24', 'i.mmd', 'o.svg'])
+    assert.deepEqual(renderArgv('d2', { ...base, theme: 'dark' }), ['--theme=200', '--pad=24', '--bundle=false', 'i.mmd', 'o.svg'])
+    assert.deepEqual(renderArgv('d2', { ...base, format: 'png', output: 'o.png' }), ['--pad=24', 'i.mmd', 'o.png'])
     assert.deepEqual(renderArgv('plantuml', { ...base, format: 'png' }), ['-tpng', '-o', 'd', 'i.mmd'])
   })
 
@@ -70,6 +71,18 @@ describe('helpers', () => {
     assert.throws(() => parseArgs(['--nope']), UsageError)
     assert.throws(() => parseArgs(['--title']), UsageError)
     assert.throws(() => parseArgs(['stray']), UsageError)
+  })
+
+  test('unsafeDirective finds includes that read files, env or URLs', () => {
+    assert.equal(unsafeDirective('plantuml', '@startuml\n!include /etc/passwd\n@enduml'), '!include /etc/passwd')
+    assert.equal(unsafeDirective('plantuml', '@startuml\n  !includeurl https://x/y\n@enduml'), '!includeurl https://x/y')
+    assert.equal(unsafeDirective('plantuml', '@startuml\n!import foo\n@enduml'), '!import foo')
+    assert.equal(unsafeDirective('plantuml', '@startuml\nA -> B : %getenv("AWS_SECRET")\n@enduml'), 'A -> B : %getenv("AWS_SECRET")')
+    assert.equal(unsafeDirective('plantuml', '@startuml\n!include <C4/C4_Container>\nA -> B\n@enduml'), null)
+    assert.equal(unsafeDirective('d2', 'a -> b\n...@../../secrets'), '...@../../secrets')
+    assert.equal(unsafeDirective('d2', 'x: @other'), 'x: @other')
+    assert.equal(unsafeDirective('d2', 'a -> b: email me@example.com'), null)
+    assert.equal(unsafeDirective('mermaid', '!include /etc/passwd'), null)
   })
 
   test('byNewestVersion sorts nvm folders newest first', () => {
@@ -92,6 +105,8 @@ describe('cli', { skip: process.platform === 'win32' && 'POSIX fake renderers' }
       copyFileSync(join(here, 'fake-renderer.mjs'), join(bin, name))
       chmodSync(join(bin, name), 0o755)
     }
+    // The fakes have no .mjs extension; Node 18 needs this to load them as ES modules.
+    writeFileSync(join(bin, 'package.json'), '{ "type": "module" }\n')
     log = join(root, 'calls.log')
   })
   after(() => rmSync(root, { recursive: true, force: true }))
@@ -181,6 +196,52 @@ describe('cli', { skip: process.platform === 'win32' && 'POSIX fake renderers' }
     const r = cli(['--title', 'Bad', '--language', 'plantuml'], { input: '@startuml\nBROKEN\n@enduml' })
     assert.equal(r.code, 1)
     assert.match(r.err, /Error line 2/)
+  })
+
+  test('PlantUML errors drawn into the image count too (older PlantUML)', () => {
+    freshCwd()
+    const r = cli(['--title', 'Bad', '--language', 'plantuml'], { input: '@startuml\nQUIET_BROKEN\n@enduml' })
+    assert.equal(r.code, 1)
+    assert.match(r.err, /PlantUML reported a syntax error: Syntax Error\? line 2/)
+    assert.equal(existsSync(join(cwd, 'diagrams')), false)
+  })
+
+  test('PlantUML runs in its SANDBOX security profile', () => {
+    freshCwd()
+    assert.equal(cli(['--title', 'S', '--language', 'plantuml'], { input: '@startuml\nA -> B\n@enduml' }).code, 0)
+    assert.match(readFileSync(log, 'utf8'), /PLANTUML_SECURITY_PROFILE=SANDBOX/)
+  })
+
+  test('includes that read files or env are refused unless allowed', () => {
+    freshCwd()
+    const r = cli(['--title', 'Leak', '--language', 'plantuml', '--json'], { input: '@startuml\n!include ~/.ssh/id_rsa\n@enduml' })
+    assert.equal(r.code, 1)
+    assert.equal(JSON.parse(r.out).kind, 'blocked')
+    assert.equal(readFileSync(log, 'utf8'), '', 'the renderer must not run')
+    const d2 = cli(['--title', 'Leak', '--language', 'd2'], { input: '...@../../secrets' })
+    assert.equal(d2.code, 1)
+    assert.match(d2.err, /blocked/)
+    const allowed = cli(['--title', 'Leak', '--language', 'plantuml'], {
+      input: '@startuml\n!include shared.puml\n@enduml',
+      env: { WHITEBOARD_ALLOW_INCLUDES: '1' },
+    })
+    assert.equal(allowed.code, 0, allowed.err)
+    assert.match(readFileSync(log, 'utf8'), /PLANTUML_SECURITY_PROFILE=\n/)
+  })
+
+  test('refuses to write through a symbolic link', { skip: process.platform === 'win32' }, () => {
+    freshCwd()
+    const outside = join(root, 'outside.txt')
+    writeFileSync(outside, 'precious\n')
+    mkdirSync(join(cwd, 'diagrams'))
+    symlinkSync(outside, join(cwd, 'diagrams', 'flow.svg'))
+    const r = cli(['--title', 'Flow'], { input: 'flowchart TD\n A-->B' })
+    assert.equal(r.code, 2)
+    assert.match(r.err, /symbolic link/)
+    assert.equal(readFileSync(outside, 'utf8'), 'precious\n')
+    rmSync(join(cwd, 'diagrams', 'flow.svg'))
+    symlinkSync(root, join(cwd, 'diagrams', '.versions'))
+    assert.equal(cli(['--title', 'Flow'], { input: 'flowchart TD\n A-->B' }).code, 2)
   })
 
   test('PlantUML from a .puml file', () => {

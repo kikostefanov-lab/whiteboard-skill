@@ -32,9 +32,16 @@ if (name === 'mmdc') {
   const format = args.find(a => a.startsWith('-t')).slice(2)
   const dir = args[args.indexOf('-o') + 1]
   const input = args[args.length - 1]
-  write(join(dir, `${basename(input).replace(/\.[^.]+$/, '')}.${format}`), format)
-  // PlantUML exits 0 on a syntax error and draws the error into the image.
-  if (readFileSync(input, 'utf8').includes('BROKEN')) process.stderr.write('Error line 2 in file: diagram.puml\nSome diagram description contains errors\n')
+  const out = join(dir, `${basename(input).replace(/\.[^.]+$/, '')}.${format}`)
+  const text = readFileSync(input, 'utf8')
+  if (process.env.FAKE_LOG) appendFileSync(process.env.FAKE_LOG, `plantuml-env PLANTUML_SECURITY_PROFILE=${process.env.PLANTUML_SECURITY_PROFILE ?? ''}\n`)
+  // PlantUML exits 0 on a syntax error and draws the error into the image; newer versions
+  // also print "Error line N", older ones only draw it.
+  if (text.includes('QUIET_BROKEN')) writeFileSync(out, '<svg xmlns="http://www.w3.org/2000/svg"><text x="1" y="1">Syntax Error?</text><text x="1" y="2">line 2</text></svg>')
+  else {
+    write(out, format)
+    if (text.includes('BROKEN')) process.stderr.write('Error line 2 in file: diagram.puml\nSome diagram description contains errors\n')
+  }
 } else {
   process.stderr.write(`fake renderer: unknown name ${name}\n`)
   process.exit(9)

@@ -15,7 +15,7 @@ const script = join(root, 'skills', 'whiteboard', 'scripts', 'render.mjs')
 const requireAll = process.argv.includes('--all')
 const syntax = readFileSync(join(root, 'skills', 'whiteboard', 'references', 'syntax.md'), 'utf8')
 const examples = [...syntax.matchAll(/^```(mermaid|d2|plantuml)\n([\s\S]*?)^```$/gm)].map(([, language, source]) => ({ language, source }))
-const BROKEN = { mermaid: 'sequenceDiagram\n  Alice-->>\n', d2: 'a -> {\n', plantuml: '@startuml\nA -> B ->\n@enduml\n' }
+const BROKEN = { mermaid: 'sequenceDiagram\n  Alice-->>\n', d2: 'a -> {\n', plantuml: '@startuml\nA -> B : ok\nthis is ((( not plantuml\n@enduml\n' }
 
 const work = mkdtempSync(join(tmpdir(), 'whiteboard-smoke-'))
 let failed = 0

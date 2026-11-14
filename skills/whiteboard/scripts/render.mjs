@@ -6,7 +6,7 @@
 // 2 bad arguments, 3 renderer not installed.
 
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, delimiter, dirname, extname, join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -59,6 +59,29 @@ Renderer paths can be pinned with WHITEBOARD_MMDC, WHITEBOARD_D2 and WHITEBOARD_
 Redrawing an existing title moves the previous files to <out>/.versions/<name>/.`
 
 // ---------------------------------------------------------------- pure helpers
+
+// Directives that make a renderer read local files, environment variables or URLs into the
+// image. A diagram drawn from untrusted content (a README, an issue) could otherwise leak
+// secrets into a file the user shares. `!include <stdlib/...>` (PlantUML's bundled library) stays allowed.
+const UNSAFE_DIRECTIVES = {
+  plantuml: [
+    /^\s*!(include(url|sub|_many|_once)?|import)\b(?!\s*<)/im,
+    /%(getenv|load_json|loadjson|file_exists|dirpath|filename|filenameNoExtension)\s*\(/i,
+  ],
+  d2: [/^\s*[^#\n]*\.\.\.\s*@|:\s*@[\w./-]/m],
+}
+
+export function unsafeDirective(language, source) {
+  for (const pattern of UNSAFE_DIRECTIVES[language] ?? []) {
+    const m = pattern.exec(source)
+    if (!m) continue
+    // Return the whole line, so the message shows the agent exactly what to change.
+    const start = source.lastIndexOf('\n', m.index + m[0].search(/\S/)) + 1
+    const end = source.indexOf('\n', m.index + m[0].length)
+    return source.slice(start, end === -1 ? undefined : end).trim()
+  }
+  return null
+}
 
 export function slug(title) {
   const s = title
@@ -113,7 +136,8 @@ export function renderArgv(language, { input, output, dir, format, theme, mermai
         ...(puppeteerConfig ? ['-p', puppeteerConfig] : []),
       ]
     case 'd2':
-      return [...(dark ? ['--theme=200'] : []), '--pad=24', input, output]
+      // --bundle=false: leave icon URLs as links instead of fetching them at render time.
+      return [...(dark ? ['--theme=200'] : []), '--pad=24', ...(format === 'svg' ? ['--bundle=false'] : []), input, output]
     case 'plantuml':
       return [`-t${format}`, ...(dark ? ['-darkmode'] : []), '-o', dir, input]
   }
@@ -218,9 +242,13 @@ export function findRenderer(language) {
 
 // ---------------------------------------------------------------- running renderers
 
+const allowIncludes = () => process.env.WHITEBOARD_ALLOW_INCLUDES === '1'
+
 function run(bin, args, { timeout = RENDER_TIMEOUT_MS } = {}) {
   // mmdc is a Node script: put its folder first on PATH so `#!/usr/bin/env node` finds the node it was installed with.
   const env = { ...process.env, PATH: [dirname(bin), process.env.PATH].filter(Boolean).join(delimiter) }
+  // PlantUML's SANDBOX profile blocks file, URL and environment access from inside diagrams.
+  if (!allowIncludes()) env.PLANTUML_SECURITY_PROFILE = 'SANDBOX'
   const viaShell = isWindows && /\.(cmd|bat)$/i.test(bin)
   const quote = s => `"${String(s).replace(/"/g, '""')}"`
   const result = viaShell
@@ -248,21 +276,56 @@ export function renderTo(language, bin, source, { dir, format = 'svg', theme = '
   }
   const produced = isFile(output) ? readFileSync(output) : null
   const valid = produced && (format === 'png' ? produced.subarray(1, 4).toString() === 'PNG' : /<svg[\s>]/.test(produced.subarray(0, 4096).toString()))
-  // PlantUML exits 0 on some syntax errors but writes an image of the error; it also prints "Error line N".
-  const plantumlError = language === 'plantuml' && /Error line \d+|Syntax Error/i.test(`${result.stderr}${result.stdout}`)
-  if (result.status !== 0 || !valid || plantumlError) return { ok: false, ...failureOf(result) }
+  // PlantUML can exit 0 on a syntax error and draw the error into the image instead; newer
+  // versions also print "Error line N".
+  if (language === 'plantuml' && valid) {
+    const printed = /Error line \d+|Syntax Error/i.test(`${result.stderr}${result.stdout}`)
+    const drawn = format === 'svg' && /Syntax Error\?/i.test(produced.toString())
+    if (printed || drawn) {
+      const texts = drawn ? [...produced.toString().matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map(m => m[1].trim()).filter(Boolean) : []
+      const failure = failureOf(result)
+      return {
+        ok: false,
+        kind: 'syntax',
+        message: printed ? failure.message : `PlantUML reported a syntax error: ${texts.join(' ').slice(0, 500) || 'see the source'}`,
+      }
+    }
+  }
+  if (result.status !== 0 || !valid) return { ok: false, ...failureOf(result) }
   return { ok: true, path: output, bytes: produced.length }
 }
 
 // ---------------------------------------------------------------- saving
 
+export class UnsafePathError extends Error {}
+
+function isLink(path) {
+  try {
+    return lstatSync(path).isSymbolicLink()
+  } catch {
+    return false
+  }
+}
+
+// Writes through a temporary file renamed into place, so the target is replaced, never followed.
+function writeReplacing(target, data) {
+  const tmp = `${target}.${process.pid}.tmp`
+  writeFileSync(tmp, data, { flag: 'wx' })
+  renameSync(tmp, target)
+}
+
 // Saves the source and rendered files as <out>/<name>.*. When the title was drawn before with a
 // different source, the earlier files move to <out>/.versions/<name>/<n>/ first.
+// Symbolic links among the files it writes or moves are refused: a planted link could
+// otherwise redirect the write to any file the user can change.
 export function save({ outDir, name, ext, source, sourceFile, rendered }) {
   mkdirSync(outDir, { recursive: true })
   const sourcePath = join(outDir, `${name}.${ext}`)
   const sameFile = Boolean(sourceFile) && resolve(sourceFile) === resolve(sourcePath)
   const exts = ['svg', 'png', ...new Set(Object.values(RENDERERS).map(r => r.ext))]
+  const candidates = [...exts.map(e => join(outDir, `${name}.${e}`)), join(outDir, '.versions'), join(outDir, '.versions', name)]
+  const link = candidates.find(isLink)
+  if (link) throw new UnsafePathError(`${link} is a symbolic link; refusing to write through it. Remove it or pick another --title or --out.`)
   const existing = exts.map(e => join(outDir, `${name}.${e}`)).filter(isFile)
   const unchanged = sameFile || (isFile(sourcePath) && readFileSync(sourcePath, 'utf8').trim() === source.trim())
   const versions = join(outDir, '.versions', name)
@@ -274,11 +337,11 @@ export function save({ outDir, name, ext, source, sourceFile, rendered }) {
     for (const file of existing) renameSync(file, join(dir, basename(file)))
   }
   const version = archived() + 1
-  if (!sameFile) writeFileSync(sourcePath, source.endsWith('\n') ? source : `${source}\n`)
+  if (!sameFile) writeReplacing(sourcePath, source.endsWith('\n') ? source : `${source}\n`)
   const written = { source: sourcePath }
   for (const [format, path] of Object.entries(rendered)) {
     const target = join(outDir, `${name}.${format}`)
-    writeFileSync(target, readFileSync(path))
+    writeReplacing(target, readFileSync(path))
     written[format] = target
   }
   return { written, version }
@@ -398,6 +461,15 @@ export function main(argv = process.argv.slice(2)) {
   }
 
   const r = RENDERERS[language]
+  const blocked = allowIncludes() ? null : unsafeDirective(language, source)
+  if (blocked) {
+    const message = `\`${blocked}\` reads files, environment variables or URLs into the diagram, so it is blocked. ` +
+      'Inline the content instead, or set WHITEBOARD_ALLOW_INCLUDES=1 if the user wants includes.'
+    report({ ok: false, kind: 'blocked', language, message })
+    if (!opts.json) process.stderr.write(`Render refused (${r.label}): ${message}\n`)
+    return 1
+  }
+
   const found = findRenderer(language)
   if (!found.path) {
     report({ ok: false, kind: 'missing', language, message: found.error })
@@ -429,7 +501,16 @@ export function main(argv = process.argv.slice(2)) {
     }
     const outDir = resolve(opts.out ?? 'diagrams')
     const name = slug(title)
-    const { written, version } = save({ outDir, name, ext: r.ext, source, sourceFile: opts.file, rendered })
+    let saved
+    try {
+      saved = save({ outDir, name, ext: r.ext, source, sourceFile: opts.file, rendered })
+    } catch (err) {
+      if (!(err instanceof UnsafePathError)) throw err
+      report({ ok: false, kind: 'unsafe-path', language, message: err.message })
+      if (!opts.json) process.stderr.write(`${err.message}\n`)
+      return 2
+    }
+    const { written, version } = saved
     if (opts.open) openFile(written.svg)
     let share
     if (opts.share) share = shareGist(title, language, source, work)
