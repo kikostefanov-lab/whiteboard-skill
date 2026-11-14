@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os'
 import { basename, delimiter, dirname, extname, join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-export const VERSION = '1.0.3'
+export const VERSION = '1.0.4'
 export const RENDER_TIMEOUT_MS = 60_000
 export const MAX_TITLE = 80
 
@@ -86,16 +86,18 @@ const ANYWHERE = {
   d2: [/(\.\.\.|:|\[|;)\s*["']?@/],
   // The browser that renders Mermaid has networking off (see puppeteerConfigFor) but loads its
   // page from a local file, so local images would still render. Labels may hold only simple
-  // formatting tags with no resource attributes; image shapes, CSS that loads resources and
-  // CSS escapes (which could spell url( in disguise) are refused.
+  // formatting tags with no resource attributes; image shapes and CSS that loads resources are
+  // refused. So is every backslash: CSS, JSON and YAML escapes (in styles, %%{init}%% or
+  // frontmatter) could spell any of these in disguise, and Mermaid breaks lines with <br>.
   mermaid: [
+    /\\/,
     /<\/?(?!(br|b|i|u|em|strong|sub|sup|small|code|span|p|hr)\b)[a-z]/i,
     /<[^>]*\b(src|srcset|poster|background|data|href|xlink:href|style)\s*=/i,
     /@\{[^}]*\bimg\b/i,
     /url\s*\(/i,
-    /@import\b/i,
+    /\b(-webkit-image-set|image-set|image|cross-fade|element|src)\(/i,
+    /@(import|font-face)\b/i,
     /themeCSS/i,
-    /^\s*(style|classDef|linkStyle)\b[^\n]*\\/im,
   ],
 }
 

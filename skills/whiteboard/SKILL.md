@@ -5,7 +5,7 @@ license: MIT
 compatibility: Needs Node.js 18+ and a shell. Mermaid diagrams need @mermaid-js/mermaid-cli (mmdc); D2 and PlantUML are optional. Rendering is local; nothing is uploaded unless the user asks to share.
 metadata:
   author: Kiko Stefanov
-  version: "1.0.3"
+  version: "1.0.4"
   repository: https://github.com/kikostefanov-lab/whiteboard-skill
 ---
 
@@ -71,7 +71,7 @@ Exit codes: `0` rendered, `1` source rejected (fix it and rerun), `2` bad argume
 Anything that reads local files, environment variables or URLs into the image is refused:
 PlantUML directives other than the plain ones (`!define`, `!if`, `!procedure`, `!$var`,
 `!theme <name>`, `!include <stdlib>` …), `%getenv` and similar built-ins, `<img:…>`, D2 `@`
-imports, and in Mermaid any image, `url(…)` or backslash in styles, and HTML other than
+imports, and in Mermaid any image, `url(…)`, any backslash (use `<br>` for line breaks), and HTML other than
 simple formatting (`<br>`, `<b>`, `<i>`, `<em>`, `<strong>`, `<code>`, `<span>` without
 attributes). Inline the content or drop the image instead. D2 diagrams with icons, block
 strings, HTML or URLs render to SVG only (they stay links). Only if the user explicitly wants

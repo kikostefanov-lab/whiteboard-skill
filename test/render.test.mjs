@@ -120,7 +120,15 @@ describe('helpers', () => {
       'A["<svg><foreignObject/></svg>"]',
       'style A fill:\\75 rl(/x.png)',
       'classDef c fill:\\000075rl(x)',
+      'A --> B; style A fill:\\75 rl(/x.png)',
+      'style A fill:image-set("/home/me/x.png" 1x)',
+      'style A fill:-webkit-image-set("/x.png" 1x)',
+      'style A fill:cross-fade("/a.png", "/b.png", 50%)',
     ]) assert.ok(unsafeDirective('mermaid', `flowchart TD\n  ${bad}`), bad)
+    // Escapes inside the init directive or YAML frontmatter.
+    assert.ok(unsafeDirective('mermaid', '%%{init: {"themeVariables": {"primaryColor": "\\u0075rl(/x)"}}}%%\nflowchart TD'))
+    assert.ok(unsafeDirective('mermaid', '---\nconfig:\n  themeVariables:\n    primaryColor: "\\x75rl(/x)"\n---\nflowchart TD'))
+    assert.equal(unsafeDirective('mermaid', '---\ntitle: Checkout\nconfig:\n  theme: forest\n---\nflowchart TD\n  A --> B'), null)
     for (const ok of [
       'A["line one<br>line two"]',
       'A["<b>bold</b> and <i>it</i><br/>x"]',

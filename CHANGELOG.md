@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.4 — 2026-11-14
+
+- Mermaid: any backslash is refused, so CSS, JSON and YAML escapes in styles, `%%{init}%%`
+  directives or frontmatter cannot disguise a resource load. Use `<br>` for line breaks.
+- Mermaid: CSS image functions that load without `url()` (`image-set(`, `cross-fade(`,
+  `image(`, `element(`, `src(`) and `@font-face` are refused.
+
 ## 1.0.3 — 2026-11-14
 
 - Mermaid: HTML in labels is an allowlist (`<br>`, `<b>`, `<i>`, `<u>`, `<em>`, `<strong>`,
