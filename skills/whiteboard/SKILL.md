@@ -68,10 +68,12 @@ you exactly what is wrong when it does not parse.
 Exit codes: `0` rendered, `1` source rejected (fix it and rerun), `2` bad arguments,
 `3` renderer not installed.
 
-PlantUML `!include`/`!import`/`%getenv` and D2 `@` imports are refused, because they read
-local files, environment variables or URLs into the image. Inline the content instead.
-PlantUML's bundled library (`!include <C4/C4_Container>`) still works. Only if the user
-explicitly wants file includes, rerun with `WHITEBOARD_ALLOW_INCLUDES=1`.
+Anything that reads local files, environment variables or URLs into the image is refused:
+PlantUML directives other than the plain ones (`!define`, `!if`, `!procedure`, `!$var`,
+`!theme <name>`, `!include <stdlib>` …), `%getenv` and similar built-ins, `<img:…>`, D2 `@`
+imports, and Mermaid images (`<img>`, `@{ img: … }`). Inline the content or drop the image
+instead. D2 diagrams with `icon:` render to SVG only (icons stay links). Only if the user
+explicitly wants includes or images, rerun with `WHITEBOARD_ALLOW_INCLUDES=1`.
 
 Redrawing with the same title keeps the earlier files in `diagrams/.versions/<slug>/<n>/`, so
 iterating on a diagram never loses the previous version.
