@@ -10,6 +10,7 @@ import {
   byNewestVersion, cleanTitle, failureOf, fenceBlock, hasD2External, languageFrom, mermaidCliDir, parseArgs, renderArgv, slug,
   stripFences, unsafeDirective, UsageError,
 } from '../skills/whiteboard/scripts/render.mjs'
+import { isZenuml } from '../skills/whiteboard/scripts/mermaid-render.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const SCRIPT = join(here, '..', 'skills', 'whiteboard', 'scripts', 'render.mjs')
@@ -138,6 +139,14 @@ describe('helpers', () => {
       assert.equal(hasD2External(src), true, src)
     }
     assert.equal(hasD2External('a -> b: calls\nb.shape: cylinder\nc <-> d: sync'), false)
+  })
+
+  test('isZenuml matches Mermaid\'s detector', () => {
+    assert.equal(isZenuml('zenuml\n  A->B.call()'), true)
+    assert.equal(isZenuml('%% note\n\nzenuml\n  A->B.call()'), true)
+    assert.equal(isZenuml('---\ntitle: X\n---\nzenuml\n  A->B.call()'), true)
+    assert.equal(isZenuml('sequenceDiagram\n  zenuml->>B: hi'), false)
+    assert.equal(isZenuml('flowchart TD'), false)
   })
 
   test('byNewestVersion sorts nvm folders newest first', () => {

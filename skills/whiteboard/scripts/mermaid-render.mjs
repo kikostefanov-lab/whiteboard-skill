@@ -53,7 +53,23 @@ async function loadFromCli(cliDir) {
   const puppeteer = mod.default ?? mod
   const mermaidDir = dirname(require.resolve('mermaid/package.json'))
   const mermaidJs = readFileSync(join(mermaidDir, 'dist', 'mermaid.min.js'), 'utf8')
-  return { puppeteer, mermaidJs }
+  // ZenUML is an add-on diagram that mermaid-cli ships; its self-contained browser bundle is
+  // injected only for ZenUML sources (it is 3 MB). Older mermaid-cli versions may lack it.
+  const zenumlJs = () => {
+    try {
+      return readFileSync(join(dirname(require.resolve('@mermaid-js/mermaid-zenuml/package.json')), 'dist', 'mermaid-zenuml.min.js'), 'utf8')
+    } catch {
+      return null
+    }
+  }
+  return { puppeteer, mermaidJs, zenumlJs }
+}
+
+// Mermaid's own detector for ZenUML: the first line that is not a comment, directive or frontmatter.
+export function isZenuml(definition) {
+  const body = definition.replace(/^\s*---\n[\s\S]*?\n---\s*\n/, '')
+  const first = body.split('\n').map(l => l.trim()).find(l => l && !l.startsWith('%%'))
+  return /^zenuml\b/.test(first ?? '')
 }
 
 export async function render(opts) {
@@ -61,7 +77,11 @@ export async function render(opts) {
   const format = opts.output.toLowerCase().endsWith('.png') ? 'png' : 'svg'
   const fileConfig = readJson(opts.config)
   const userLaunch = readJson(opts.puppeteer)
-  const { puppeteer, mermaidJs } = await loadFromCli(opts.cli)
+  const { puppeteer, mermaidJs, zenumlJs } = await loadFromCli(opts.cli)
+  const zenuml = isZenuml(definition) ? zenumlJs() : null
+  if (isZenuml(definition) && !zenuml) {
+    throw new Error('ZenUML needs @mermaid-js/mermaid-zenuml, which this mermaid-cli does not include. Update it: npm i -g @mermaid-js/mermaid-cli. Or use sequenceDiagram.')
+  }
 
   const launch = {
     headless: 'shell',
@@ -98,6 +118,36 @@ export async function render(opts) {
       content: 'const d = HTMLImageElement.prototype.decode; HTMLImageElement.prototype.decode = function () { return d.call(this).catch(() => {}) }',
     })
     await page.addScriptTag({ content: mermaidJs })
+    // ZenUML's parser recovers from errors and only logs them (`line 2:13 mismatched input …`),
+    // then draws a partial diagram; collect them so a broken source fails like any other.
+    const zenumlErrors = []
+    if (zenuml) {
+      page.on('console', msg => {
+        const text = msg.text()
+        if (/^line \d+:\d+ (no viable|mismatched|extraneous|missing|token recognition)/.test(text)) zenumlErrors.push(text)
+      })
+      // ZenUML reads localStorage, which this blank sandboxed page may not use; give it an
+      // in-memory stand-in that lasts only for this render.
+      await page.addScriptTag({
+        content: `(() => {
+          const data = new Map()
+          const storage = {
+            getItem: k => (data.has(String(k)) ? data.get(String(k)) : null),
+            setItem: (k, v) => void data.set(String(k), String(v)),
+            removeItem: k => void data.delete(String(k)),
+            clear: () => data.clear(),
+            key: i => [...data.keys()][i] ?? null,
+            get length() { return data.size },
+          }
+          Object.defineProperty(window, 'localStorage', { value: storage, configurable: true })
+        })()`,
+      })
+      await page.addScriptTag({ content: zenuml })
+      await page.evaluate(async () => {
+        const plugin = globalThis.__esbuild_esm_mermaid_nm?.['mermaid-zenuml']
+        await globalThis.mermaid.registerExternalDiagrams([plugin?.default ?? plugin])
+      })
+    }
 
     const config = {
       startOnLoad: false,
@@ -119,6 +169,7 @@ export async function render(opts) {
       },
       { definition, config, background },
     )
+    if (zenumlErrors.length) throw new Error(`ZenUML parse error:\n${[...new Set(zenumlErrors)].slice(0, 5).join('\n')}`)
 
     if (format === 'svg') {
       const svg = await page.$eval('#container svg', el => new XMLSerializer().serializeToString(el))

@@ -5,7 +5,7 @@ license: MIT
 compatibility: Needs Node.js 18+ and a shell. Mermaid diagrams need @mermaid-js/mermaid-cli (mmdc); D2 and PlantUML are optional. Rendering is local; nothing is uploaded unless the user asks to share.
 metadata:
   author: Kiko Stefanov
-  version: "1.1.0"
+  version: "1.1.1"
   repository: https://github.com/kikostefanov-lab/whiteboard-skill
 ---
 

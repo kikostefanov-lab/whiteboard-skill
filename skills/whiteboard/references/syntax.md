@@ -1,6 +1,6 @@
 # Diagram syntax
 
-Short working examples of each diagram type. Every Mermaid example here is rendered in this
+Short working examples of each diagram type. Every example here is rendered in this
 repository's tests. Full documentation: https://mermaid.js.org/intro/,
 https://d2lang.com/tour/intro, https://plantuml.com/.
 
@@ -118,6 +118,149 @@ mindmap
     Outputs
       SVG
       PNG
+```
+
+### ZenUML (sequence diagrams written like code)
+
+```mermaid
+zenuml
+  title Orders
+  @Actor User
+  User->Shop.order(id) {
+    if(inStock) {
+      Shop->Warehouse.ship(id)
+    } else {
+      return backordered
+    }
+  }
+```
+
+### More Mermaid types
+
+Each of these renders; use them when they fit the question better than a flowchart.
+
+```mermaid
+C4Context
+  Person(user, "Customer")
+  System(shop, "Shop", "Takes orders")
+  System_Ext(pay, "Payments")
+  Rel(user, shop, "Orders from")
+  Rel(shop, pay, "Charges via")
+```
+
+```mermaid
+architecture-beta
+  group api(cloud)[Platform]
+  service web(internet)[Web] in api
+  service app(server)[Orders API] in api
+  service db(database)[Postgres] in api
+  web:R -- L:app
+  app:R -- L:db
+```
+
+```mermaid
+gitGraph
+  commit
+  branch feature
+  commit
+  checkout main
+  merge feature
+  commit
+```
+
+```mermaid
+timeline
+  title Releases
+  2025 Q1 : Beta
+  2025 Q3 : 1.0
+  2026 Q1 : 2.0
+```
+
+```mermaid
+journey
+  title Checkout
+  section Cart
+    Add item: 5: Customer
+    Review cart: 3: Customer
+  section Pay
+    Enter card: 2: Customer
+```
+
+```mermaid
+pie title Requests by service
+  "Orders" : 45
+  "Search" : 35
+  "Accounts" : 20
+```
+
+```mermaid
+quadrantChart
+  title Effort vs impact
+  x-axis Low effort --> High effort
+  y-axis Low impact --> High impact
+  Caching: [0.2, 0.8]
+  Rewrite: [0.9, 0.6]
+```
+
+```mermaid
+xychart-beta
+  title "Latency (ms)"
+  x-axis [Mon, Tue, Wed, Thu]
+  bar [120, 95, 140, 80]
+  line [120, 95, 140, 80]
+```
+
+```mermaid
+sankey-beta
+  Visits,Signups,30
+  Visits,Bounced,70
+  Signups,Paid,10
+```
+
+```mermaid
+block-beta
+  columns 3
+  web["Web"] api["API"] db[("DB")]
+```
+
+```mermaid
+kanban
+  todo[To do]
+    t1[Write docs]
+  doing[In progress]
+    t2[Sandbox renderer]
+```
+
+```mermaid
+requirementDiagram
+  requirement offline {
+    id: 1
+    text: Renders without network
+    risk: low
+    verifymethod: test
+  }
+```
+
+```mermaid
+packet-beta
+  0-15: "Source port"
+  16-31: "Destination port"
+  32-63: "Sequence number"
+```
+
+```mermaid
+radar-beta
+  axis speed, safety, coverage
+  curve v1{2, 3, 3}
+  curve v2{4, 5, 4}
+```
+
+```mermaid
+treemap-beta
+  "Repo"
+    "src": 60
+    "tests": 25
+    "docs": 15
 ```
 
 ## D2

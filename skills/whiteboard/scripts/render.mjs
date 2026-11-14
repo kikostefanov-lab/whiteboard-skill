@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os'
 import { basename, delimiter, dirname, extname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-export const VERSION = '1.1.0'
+export const VERSION = '1.1.1'
 export const RENDER_TIMEOUT_MS = 60_000
 export const MAX_TITLE = 80
 

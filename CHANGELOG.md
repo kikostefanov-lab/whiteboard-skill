@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.1 — 2026-11-14
+
+- ZenUML works again. 1.1.0's sandboxed renderer had dropped it. Its browser bundle from
+  mermaid-cli is injected only for ZenUML sources, with an in-memory `localStorage` because
+  the sandbox page may not use the real one.
+- ZenUML syntax errors now fail the render with ZenUML's own line and column messages. Its
+  parser recovers silently and draws a partial diagram, so under `mmdc` they never surfaced.
+- The syntax reference now has a working example of every Mermaid diagram type (C4,
+  architecture, git graph, timeline, journey, pie, quadrant, xy chart, sankey, block, kanban,
+  requirement, packet, radar, treemap, ZenUML), all rendered in CI.
+
 ## 1.1.0 — 2026-11-14
 
 - **Mermaid renders in its own sandbox instead of through `mmdc`.** `mermaid-render.mjs` uses
